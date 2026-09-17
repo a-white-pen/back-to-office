@@ -1,0 +1,20 @@
+# Back to Office — the fetch-execution summary email (python -m bto summarise).
+# Fired by the service chain: fetch-job-listings.service declares
+# OnSuccess=/OnFailure= on this unit, so one summary follows each scheduled
+# fetch execution — success, partial or failed — scoped by the handoff file
+# (data/last_fetch.json) to exactly that execution's runs. There is no
+# summary timer any more; manual fetches send their own summary in-process.
+
+[Unit]
+Description=Back to Office fetch-execution summary email
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/bto
+EnvironmentFile=/etc/bto/env
+ExecStart=/opt/bto/.venv/bin/python -m bto summarise
+TimeoutStartSec=15min
+SyslogIdentifier=send-job-listings-summary-email
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,23 @@
+# Back to Office — nightly cleaning: standardize and canonicalize job listings.
+# Chained after a successful fetch; it intentionally has no timer or automatic
+# restart. Python reports handled failures, and the next successful fetch retries.
+
+[Unit]
+Description=Back to Office nightly cleaning (standardize, canonicalize)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/bto
+EnvironmentFile=/etc/bto/env
+# Deployment supplies the single reviewed wheel in /opt/bto/wheels.
+ExecStart=/opt/bto/.venv/bin/python -m bto.clean_job_listings.run --stage nightly --engine databricks --wheel /opt/bto/wheels
+# The Databricks run and poll are capped at 3 h; this leaves reporting margin.
+TimeoutStartSec=4h
+# Best-effort fallback only for failures Python could not report itself.
+ExecStopPost=-/opt/bto/.venv/bin/python -m bto.send_notifications.notify --service-failure clean-job-listings
+SyslogIdentifier=clean-job-listings
+StandardOutput=journal
+StandardError=journal

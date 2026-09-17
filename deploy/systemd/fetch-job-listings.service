@@ -1,0 +1,32 @@
+# Back to Office — nightly job listing collection (fetch_job_listings).
+# One oneshot execution per timer firing. stdout/stderr go to journald:
+#   journalctl -u fetch-job-listings
+# No Restart= on purpose: a failed collection notifies by email and is
+# retried by the next night's diff; auto-restarting a scrape could
+# double-fetch and double-spend.
+
+[Unit]
+Description=Back to Office nightly job listing collection
+Wants=network-online.target
+After=network-online.target postgresql.service
+# Provider failures remain visible but do not block cleaning after controlled
+# completion. A non-zero exit blocks cleaning because collection did not reach
+# its normal terminal state.
+OnSuccess=send-job-listings-summary-email.service clean-job-listings.service
+OnFailure=send-job-listings-summary-email.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/bto
+EnvironmentFile=/etc/bto/env
+ExecStart=/opt/bto/.venv/bin/python -m bto collect --trigger scheduled
+# The whole night (10 runs, max 4 parallel; Indeed queries are sequential
+# within each market) fits well inside this; a hang past it is killed and the
+# scrape_runs rows left `running` say which runs never came back.
+TimeoutStartSec=6h
+# Best-effort alert for unsafe termination and skipped cleaning.
+ExecStopPost=-/opt/bto/.venv/bin/python -m bto.send_notifications.notify --service-failure fetch-job-listings
+SyslogIdentifier=fetch-job-listings
+StandardOutput=journal
+StandardError=journal

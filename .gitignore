@@ -1,0 +1,44 @@
+# ─── secrets — never commit ──────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# a local copy of the box's root-owned /etc/bto/env
+etc-bto-env
+
+# ─── personal data — never commit (this repo is PUBLIC) ──────
+cv-bank/
+applications/
+# private notes and machine-local config, in any folder
+**/*.local.md
+**/*.local.json
+# search strategy is private local configuration, any board, present
+# or future; searches.example.py is the committed template
+searches.py
+
+# ─── tests — kept local, not published ───────────────────────
+# fixtures are real provider captures
+tests/
+
+# ─── local runtime state ─────────────────────────────────────
+data/
+snapshot/
+*.log
+*.db
+
+# ─── python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.whl
+
+# ─── os / editor / agent ─────────────────────────────────────
+.DS_Store
+.vscode/
+.claude/

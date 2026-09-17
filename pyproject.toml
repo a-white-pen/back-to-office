@@ -1,0 +1,56 @@
+[project]
+name = "bto"
+version = "0.1.7"
+description = "Back to Office — a personal job-search system"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+
+dependencies = [
+  "psycopg[binary]>=3.2",
+  "numpy>=2.0",
+  # Deterministic MinHash output is part of the matching contract.
+  "datasketch==2.0.0",
+  # Country reference data must not drift under rebuilds.
+  "pycountry==26.2.16",
+]
+
+[project.optional-dependencies]
+# PySpark is used only for local parity tests, not production runtime.
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "pyspark>=3.5",
+]
+
+# Wheel code changes require a new package version; see deploy/README.md.
+[project.scripts]
+bto-canonicalize = "bto.clean_job_listings.canonicalize_on_databricks:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+ignore = [
+  "BLE001",  # broad excepts are the fail-soft boundaries this stage is built on
+  "ISC004",  # implicit string concatenation formats the long schema DDL literals
+  "TRY004",  # ValueError for provider shape drift is this codebase's idiom
+  "UP031",   # the GraphQL detail query uses %-substitution for its zone
+  "UP017",   # timezone.utc reads the same on every Python this runs on
+  "FURB162", # .replace("Z", …) before fromisoformat stays as provider-input armor
+]
+
+[tool.ruff.lint.per-file-ignores]
+# .env.example-style templates: copied to searches.py, never imported under
+# their own dotted filename
+"**/searches.example.py" = ["N999"]

@@ -1,0 +1,16 @@
+# Fires fetch-job-listings.service nightly at 03:30 Singapore time. The timezone is
+# stated in the calendar expression itself, so the schedule stays 03:30 SGT
+# even if the box's local timezone ever changes.
+# Persistent=false: a missed firing (box down at 03:30) is NOT run late —
+# the next night's diff recovers the gap instead.
+
+[Unit]
+Description=Back to Office collection at 03:30 SGT nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Singapore
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
