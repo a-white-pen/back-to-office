@@ -3,9 +3,10 @@
 Called by:
     fetch_job_listings.indeed.fetch, fetch_job_listings.indeed.parse
 
-Indeed is collected through the Curious Coder Apify Actor (a monthly rental:
-runs bill platform usage, not per result). One Actor run per configured
-query; the Actor input differs by market only in country/location.
+Indeed is collected through the Curious Coder Apify Actor, which bills per
+event: once to start a run and once per dataset item it returns. One Actor
+run per configured query; the Actor input differs by market only in
+country/location.
 
 """
 
@@ -13,8 +14,11 @@ from dataclasses import dataclass
 
 ACTOR_ID = "qA8rz8tR61HdkfTBL"
 ACTOR_NAME = "curious_coder/indeed-scraper"
-EXPECTED_PRICING_MODEL = "FLAT_PRICE_PER_MONTH"   # the rental; a switch to
-                                                  # per-result pricing must stop the run
+EXPECTED_PRICING_MODEL = "PAY_PER_EVENT"
+RESULT_EVENT = "apify-default-dataset-item"
+START_EVENT = "apify-actor-start"
+MAX_RESULT_EVENT_PRICE_USD = 0.0001
+MAX_START_EVENT_PRICE_USD = 0.0001
 POSTED_WITHIN_DAYS = 1
 
 

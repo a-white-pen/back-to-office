@@ -707,9 +707,13 @@ def _collect_indeed(dbx, settings, market, run_id, run_log, alerts):
     catalog = settings["databricks_catalog"]
     client = ApifyClient(settings["apify_token"])
     actor_metadata = indeed_fetch.validate_actor(client)
-    run_log.info("Indeed actor verified: build %s, pricing %s",
+    prices = actor_metadata.get("chargedEventPricesUsd") or {}
+    run_log.info("Indeed actor verified: build %s, pricing %s (%s)",
                  actor_metadata.get("buildNumber"),
-                 actor_metadata.get("pricingModel"))
+                 actor_metadata.get("pricingModel"),
+                 ", ".join(f"{event} USD {price:.6f}"
+                           for event, price in sorted(prices.items()))
+                 or "no charged events")
 
     queries = adapter.queries
     smoke = bool(settings["terms_limit"])

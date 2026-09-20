@@ -8,8 +8,8 @@ Calls:
 
 One Actor run per configured query, `postedWithinDays = 1`, no result cap
 (an omitted count means "all available"). The Actor is validated by output
-shape and pricing model — never by pinning a build id, which would break
-every time the provider publishes.
+shape and by what it charges — never by pinning a build id, which would
+break every time the provider publishes.
 
 Main surface:
     adapter(market)              per-market configuration + the query plan
@@ -25,9 +25,19 @@ storage/databricks/write.py; cost rows are storage/postgres/write.py.
 import json
 import logging
 
-from ..apify_client import actor_summary
+from ..apify_client import active_pricing, actor_summary
 from . import searches
-from .markets import ACTOR_ID, ACTOR_NAME, EXPECTED_PRICING_MODEL, MARKETS, POSTED_WITHIN_DAYS
+from .markets import (
+    ACTOR_ID,
+    ACTOR_NAME,
+    EXPECTED_PRICING_MODEL,
+    MARKETS,
+    MAX_RESULT_EVENT_PRICE_USD,
+    MAX_START_EVENT_PRICE_USD,
+    POSTED_WITHIN_DAYS,
+    RESULT_EVENT,
+    START_EVENT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -67,19 +77,58 @@ def adapter(market):
     return IndeedAdapter(market)
 
 
+def charged_event_price(event):
+    """The most the Actor can charge for one such event, flat or tiered.
+
+    Which tier applies depends on the month's volume, so the guard reads the
+    worst case rather than the tier today's run would land in. None when the
+    Actor does not price the event at all — which is a refusal, not a zero:
+    an event we cannot price is an event we have not approved.
+    """
+    if not isinstance(event, dict):
+        return None
+    prices = []
+    if isinstance(event.get("eventPriceUsd"), (int, float)):
+        prices.append(float(event["eventPriceUsd"]))
+    prices += [float(tier["tieredEventPriceUsd"])
+               for tier in (event.get("eventTieredPricingUsd") or {}).values()
+               if isinstance(tier, dict)
+               and isinstance(tier.get("tieredEventPriceUsd"), (int, float))]
+    return max(prices) if prices else None
+
+
 def validate_actor(client):
-    """Prove the Actor is still the one we approved, before any spend:
-    same id, same owner/name, still the monthly-rental pricing model.
-    Output shape is validated per row as datasets arrive (parse.py)."""
-    summary = actor_summary(client.actor(ACTOR_ID))
+    """Prove the Actor is still the one we approved, before any spend: same
+    id, same owner/name, still pay-per-event, and both charged events at or
+    below their approved prices. Returns the stored summary, carrying the
+    prices this run was approved at. Output shape is validated per row as
+    datasets arrive (parse.py)."""
+    actor = client.actor(ACTOR_ID)
+    summary = actor_summary(actor)
     if summary.get("id") != ACTOR_ID:
         raise ValueError("Apify Indeed Actor id changed")
     if summary.get("name") != ACTOR_NAME:
         raise ValueError(f"Apify Indeed Actor ownership/name changed: "
                          f"{summary.get('name')!r}")
-    if summary.get("pricingModel") != EXPECTED_PRICING_MODEL:
+    pricing = active_pricing(actor)
+    if pricing.get("pricingModel") != EXPECTED_PRICING_MODEL:
         raise ValueError(f"Apify Indeed Actor pricing changed: "
-                         f"{summary.get('pricingModel')!r} — inspect before running")
+                         f"{pricing.get('pricingModel')!r} — inspect before running")
+    events = (pricing.get("pricingPerEvent") or {}).get("actorChargeEvents") or {}
+    approved = {}
+    for name, ceiling in ((RESULT_EVENT, MAX_RESULT_EVENT_PRICE_USD),
+                          (START_EVENT, MAX_START_EVENT_PRICE_USD)):
+        price = charged_event_price(events.get(name))
+        if price is None:
+            raise ValueError(f"Apify Indeed Actor no longer prices {name!r} "
+                             f"— inspect before running")
+        if price > ceiling + 1e-12:
+            raise ValueError(f"Apify Indeed Actor {name} price rose to USD "
+                             f"{price:.8f}, approved USD {ceiling:.8f} "
+                             f"— inspect before running")
+        approved[name] = price
+    summary["chargedEventPricesUsd"] = approved
+    summary["pricingStartedAt"] = pricing.get("startedAt")
     return summary
 
 
