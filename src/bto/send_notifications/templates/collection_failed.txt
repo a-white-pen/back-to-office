@@ -1,0 +1,19 @@
+Subject: BTO · {{DATE}} · collection: {{PROBLEM_SUMMARY}}
+
+Collection: {{PROBLEM_SUMMARY}}
+===============================
+
+[IF FAILED_RUNS]{{FAILED_RUNS}} failed[END IF][IF BOTH], [END IF][IF PARTIAL_RUNS]{{PARTIAL_RUNS}} partial with search coverage lost[END IF]: {{PROBLEM_RUN_LIST}}.
+[IF COLLECTION FINISHED]Sorting will still run on what was collected.[END IF]
+[IF COLLECTION STOPPED]Collection stopped before finishing. Nothing will be sorted tonight.[END IF]
+
+FAILED AND PARTIAL RUNS
+-----------------------
+
+[REPEAT for each failed or partial run]
+{{BOARD}} {{MARKET}} · {{STATUS}}
+  Reason: {{REASON}}
+  Search terms {{TERMS_DONE}} of {{TERMS_PLANNED}} · Job listings seen {{JOB_LISTINGS_SEEN}} · JDs fetched {{JDS_FETCHED}}
+[END REPEAT]
+
+[IF OK_RUN_LIST]Finished ok: {{OK_RUN_LIST}}.[END IF]

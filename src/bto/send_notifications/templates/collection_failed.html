@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>BTO · {{DATE}} · collection: {{PROBLEM_SUMMARY}}</title>
+<!--
+BTO · Email 1 · Collection failed · TEMPLATE
+Subject: BTO · {{DATE}} · collection: {{PROBLEM_SUMMARY}}
+Placeholders: {{UPPER_SNAKE}}. Blocks: "IF X" … "END IF" and "REPEAT x" … "END REPEAT" comments mark conditional and repeated parts.
+{{..._COLOUR}} for a status word: ok #1f883d · partial #9a6700 · failed #cf222e.
+Numbers: thousands separators (4,543). Times: h:mm AM/PM, Singapore time (4:30 AM).
+PROBLEM_SUMMARY: "6 runs failed" · "2 runs partial" · "4 runs failed, 1 partial"
+FAILED_RUNS / PARTIAL_RUNS: "6 runs" · "1 run"
+PROBLEM_RUN_LIST: "Indeed SG, HK and TH; LinkedIn SG, HK and TH"
+STATUS: failed | partial (partial only when search coverage was lost; LinkedIn foreign-job partials never appear here)
+-->
+</head>
+<body style="margin:0;padding:0;">
+<span style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;"><!-- IF COLLECTION FINISHED -->Sorting will still run on what was collected.<!-- END IF --><!-- IF COLLECTION STOPPED -->Collection stopped before finishing. Nothing will be sorted tonight.<!-- END IF --></span>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:24px 16px;">
+<!--[if mso]><table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;"><tr><td align="left" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;">
+<h1 style="margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:1.3;font-weight:600;">Collection: {{PROBLEM_SUMMARY}}</h1>
+<p style="margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;"><!-- IF FAILED_RUNS --><b>{{FAILED_RUNS}}</b> <span style="color:#cf222e;font-weight:600;">failed</span><!-- END IF --><!-- IF FAILED_RUNS AND PARTIAL_RUNS -->, <!-- END IF --><!-- IF PARTIAL_RUNS --><b>{{PARTIAL_RUNS}}</b> <span style="color:#9a6700;font-weight:600;">partial</span> with search coverage lost<!-- END IF -->: {{PROBLEM_RUN_LIST}}. <!-- IF COLLECTION FINISHED -->Sorting will still run on what was collected.<!-- END IF --><!-- IF COLLECTION STOPPED -->Collection stopped before finishing. Nothing will be sorted tonight.<!-- END IF --></p>
+<h2 style="margin:28px 0 10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;line-height:1.3;font-weight:600;">Failed and partial runs</h2>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.4;margin:0 0 16px;width:100%;">
+<tr><th align="left" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;font-weight:600;text-align:left;">Board</th><th align="left" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;font-weight:600;text-align:left;">Market</th><th align="left" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;font-weight:600;text-align:left;">Status</th><th align="right" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;font-weight:600;text-align:right;">Search terms</th><th align="right" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;font-weight:600;text-align:right;">Job listings seen</th><th align="right" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;font-weight:600;text-align:right;">JDs fetched</th></tr>
+<!-- REPEAT for each failed or partial run -->
+<tr><td align="left" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;text-align:left;border-bottom:0;">{{BOARD}}</td><td align="left" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;text-align:left;border-bottom:0;">{{MARKET}}</td><td align="left" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;text-align:left;border-bottom:0;"><span style="color:{{STATUS_COLOUR}};font-weight:600;">{{STATUS}}</span></td><td align="right" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;text-align:right;white-space:nowrap;border-bottom:0;">{{TERMS_DONE}} of {{TERMS_PLANNED}}</td><td align="right" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;text-align:right;white-space:nowrap;border-bottom:0;">{{JOB_LISTINGS_SEEN}}</td><td align="right" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;text-align:right;white-space:nowrap;border-bottom:0;">{{JDS_FETCHED}}</td></tr>
+<tr><td colspan="6" style="border:1px solid #d0d7de;padding:5px 10px;vertical-align:top;border-top:0;">Reason: {{REASON}}</td></tr>
+<!-- END REPEAT -->
+</table>
+<!-- IF OK_RUN_LIST -->
+<p style="margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;"><b>Finished <span style="color:#1f883d;font-weight:600;">ok</span>:</b> {{OK_RUN_LIST}}.</p>
+<!-- END IF -->
+</td></tr></table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td></tr></table>
+</body>
+</html>

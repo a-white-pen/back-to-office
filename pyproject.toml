@@ -15,6 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Web runtime is installed separately from the nightly collection.
+web = ["Flask>=3.1"]
+
 # PySpark is used only for local parity tests, not production runtime.
 dev = [
   "pytest>=8.0",
@@ -54,3 +57,6 @@ ignore = [
 # .env.example-style templates: copied to searches.py, never imported under
 # their own dotted filename
 "**/searches.example.py" = ["N999"]
+
+# Safe authentication template, never imported under its dotted filename.
+"**/auth_config.example.py" = ["N999"]

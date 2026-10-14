@@ -3,18 +3,21 @@
 ## Project Overview
 
 Back to Office (BTO) collects job listings, preserves what boards returned,
-cleans and deduplicates them, and is intended to support ranking, CV tailoring
-and application tracking.
+cleans and deduplicates them, and is intended to support filtering and
+bucketing, CV tailoring and application tracking.
 
 The implemented packages are `fetch_job_listings`, `clean_job_listings`,
 `send_notifications`, `storage/databricks`, and `storage/postgres` (costs).
 Databricks is the analytical lakehouse; PostgreSQL currently records
-operational cost data. These namespaces are reserved and contain only
-initializers:
-`filter_and_rank`, `review_jds`, `tailor_cvs`, `research_job_listing`,
-`apply_for_jobs`, `track_applied_jobs`, `web`, `analytics`, `record_costs`,
-`storage/s3`, and `sync`. Their presence does not mean their behavior, schemas,
-or architecture have been decided.
+operational cost data. `filter_and_bucket_job_listings` and `sync` contain the
+filtering, bucketing and job-listing transfer scaffold; processing is not
+implemented. The PostgreSQL data dictionary records the decided table contracts.
+
+These other namespaces are reserved and contain only initializers:
+`review_jds`, `tailor_cvs`, `research_job_listing`, `apply_for_jobs`,
+`track_applied_jobs`, `web`, `analytics`, `record_costs`, and `storage/s3`.
+Their presence does not mean their behavior, schemas or architecture have
+been decided.
 
 ## Build and Run Commands
 
@@ -72,7 +75,7 @@ quirks and safety boundaries.
 - **Bronze volumes are immutable.** Fix a parsing bug by re-reading the raw
   file, never by editing one.
 - Current Silver products are rebuildable. PostgreSQL currently stores costs;
-  future review/application state is unimplemented and has no decided schema.
+  filtering and bucketing table contracts are documented. Future review/application state remains unimplemented.
 - **Collection isolates each board × market run.** A controlled provider/run
   failure does not stop other pairs or make a normally completed collection
   command exit nonzero. Normal completion writes the finished handoff and
@@ -157,4 +160,4 @@ Report what changed, what was tested and remaining risk, then stop.
 
 Never introduce internal phase-number terminology into committed code,
 comments or documentation. Use functional names such as collection,
-standardization, canonicalization, filtering and ranking, or notification.
+standardization, canonicalization, filtering and bucketing, or notification.

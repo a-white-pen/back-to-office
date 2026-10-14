@@ -1,0 +1,11 @@
+BTO email subjects
+
+Email 1 · Collection failed
+  BTO · {{DATE}} · collection: {{PROBLEM_SUMMARY}}
+  Example: BTO · 27 Sep · collection: 6 runs failed
+
+Email 2 · Morning email
+  All done:      BTO · {{DATE}} · Top picks {{TOP_PICKS_TOTAL}} · In lane {{IN_LANE_TOTAL}} · Not sorted {{NOT_SORTED_TOTAL}}
+  Not finished:  BTO · {{DATE}} · NOT FINISHED · stopped during {{STEP}}
+  Examples:      BTO · 9 Oct · Top picks 170 · In lane 243 · Not sorted 1
+                 BTO · 9 Oct · NOT FINISHED · stopped during extraction

@@ -1,0 +1,139 @@
+Subject: BTO · {{DATE}} · Top picks {{TOP_PICKS_TOTAL}} · In lane {{IN_LANE_TOTAL}} · Not sorted {{NOT_SORTED_TOTAL}}
+   or: BTO · {{DATE}} · NOT FINISHED · stopped during {{STEP}}
+
+BTO · {{DATE}}
+==============
+
+{{STATUS_LINE}}
+
+                Start             End                       Duration             Cost        From cache
+  Whole night   {{NIGHT_START}}   {{NIGHT_END}}   {{NIGHT_DURATION}}   {{NIGHT_COST}}   {{NIGHT_CACHE}}
+
+[IF ANY PROBLEMS OR ROUTINE NOTES]
+PROBLEMS
+--------
+[REPEAT for each failed step]
+{{STEP}} · {{STATUS}}
+  {{ERROR}}
+  Missing from the Review tab: {{MISSING_FROM_REVIEW}}
+[END REPEAT]
+[REPEAT for each routine note]
+{{STEP}} · {{BOARD}} {{MARKET}} partial · routine
+  {{NOTE}}
+[END REPEAT]
+[END IF]
+
+BUCKETS
+-------
+Open the Review tab: https://bto.awhitepen.com
+
+  Bucket                                                                   SG                                    HK                                    TH                                    Total
+  > Top picks                                                {{TOP_PICKS_SG}}                      {{TOP_PICKS_HK}}                      {{TOP_PICKS_TH}}                      {{TOP_PICKS_TOTAL}}
+  > In lane                                                    {{IN_LANE_SG}}                        {{IN_LANE_HK}}                        {{IN_LANE_TH}}                        {{IN_LANE_TOTAL}}
+  > Not sorted                                              {{NOT_SORTED_SG}}                     {{NOT_SORTED_HK}}                     {{NOT_SORTED_TH}}                     {{NOT_SORTED_TOTAL}}
+  > Less interested · in your queue           {{LESS_INTERESTED_IN_QUEUE_SG}}       {{LESS_INTERESTED_IN_QUEUE_HK}}       {{LESS_INTERESTED_IN_QUEUE_TH}}       {{LESS_INTERESTED_IN_QUEUE_TOTAL}}
+  = Your queue                                              {{YOUR_QUEUE_SG}}                     {{YOUR_QUEUE_HK}}                     {{YOUR_QUEUE_TH}}                     {{YOUR_QUEUE_TOTAL}}
+
+  Less interested · not in your queue     {{LESS_INTERESTED_NOT_IN_QUEUE_SG}}   {{LESS_INTERESTED_NOT_IN_QUEUE_HK}}   {{LESS_INTERESTED_NOT_IN_QUEUE_TH}}   {{LESS_INTERESTED_NOT_IN_QUEUE_TOTAL}}
+
+  Ineligible                                                {{INELIGIBLE_SG}}                     {{INELIGIBLE_HK}}                     {{INELIGIBLE_TH}}                     {{INELIGIBLE_TOTAL}}
+  Out of scope · Non-tech                        {{OUT_OF_SCOPE_NON_TECH_SG}}          {{OUT_OF_SCOPE_NON_TECH_HK}}          {{OUT_OF_SCOPE_NON_TECH_TH}}          {{OUT_OF_SCOPE_NON_TECH_TOTAL}}
+  Out of scope · Tech, not for me         {{OUT_OF_SCOPE_TECH_NOT_FOR_ME_SG}}   {{OUT_OF_SCOPE_TECH_NOT_FOR_ME_HK}}   {{OUT_OF_SCOPE_TECH_NOT_FOR_ME_TH}}   {{OUT_OF_SCOPE_TECH_NOT_FOR_ME_TOTAL}}
+  Out of scope · Title filter                {{OUT_OF_SCOPE_TITLE_FILTER_SG}}      {{OUT_OF_SCOPE_TITLE_FILTER_HK}}      {{OUT_OF_SCOPE_TITLE_FILTER_TH}}      {{OUT_OF_SCOPE_TITLE_FILTER_TOTAL}}
+  Suppressed                                                {{SUPPRESSED_SG}}                     {{SUPPRESSED_HK}}                     {{SUPPRESSED_TH}}                     {{SUPPRESSED_TOTAL}}
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  = All job listings first seen tonight                 {{ALL_FIRST_SEEN_SG}}                 {{ALL_FIRST_SEEN_HK}}                 {{ALL_FIRST_SEEN_TH}}                 {{ALL_FIRST_SEEN_TOTAL}}
+
+[IF MONDAY]
+LACKS THIS WEEK
+---------------
+  Mondays only, the last 7 nights. A lack is a required tool, credential or
+  industry that is on neither your have list nor your cannot list.
+  Two lacks make a listing Ineligible.
+
+  Lack       Listings asking       Went Ineligible
+  [REPEAT for each lack, most asked first]
+  {{LACK}}    {{LACK_ASKED}}   {{LACK_INELIGIBLE}}
+  [END REPEAT]
+[END IF]
+
+COST
+----
+  Triage and extraction run at Google's half price using Flex throughout.
+  On normal nights, no new read starts after 8:30 AM; calls already sent may finish.
+
+                                 Half price                       Cost                     Full price                       Cost                 Total
+  Triage           {{TRIAGE_HALF_LISTINGS}}       {{TRIAGE_HALF_COST}}       {{TRIAGE_FULL_LISTINGS}}       {{TRIAGE_FULL_COST}}       {{TRIAGE_COST}}
+  Extraction   {{EXTRACTION_HALF_LISTINGS}}   {{EXTRACTION_HALF_COST}}   {{EXTRACTION_FULL_LISTINGS}}   {{EXTRACTION_FULL_COST}}   {{EXTRACTION_COST}}
+  ----------------------------------------------------------------------------------------------------------------------------------------------------
+  Total                   {{HALF_LISTINGS}}              {{HALF_COST}}              {{FULL_LISTINGS}}              {{FULL_COST}}        {{READS_COST}}
+
+  [IF ANY FULL PRICE]
+  Full price: {{FULL_LISTINGS}} listings, {{FULL_COST}}
+  [END IF]
+  Google total: {{READS_COST}} of the {{CEILING}} ceiling.
+  [IF CEILING REACHED]
+  Ceiling reached at {{CEILING_TIME}}. {{UNREAD_LISTINGS}} listings left unread.
+  [END IF]
+
+STEPS
+-----
+
+COLLECTION · {{COLLECTION_STATUS}}
+  Searches each board in each market with your search terms, then
+  fetches the JD of every new job listing.
+
+  Start                  End                                 Duration                  Cost             From cache
+  {{COLLECTION_START}}   {{COLLECTION_END}}   {{COLLECTION_DURATION}}   {{COLLECTION_COST}}   {{COLLECTION_CACHE}}
+
+  Board       Market       Status                 Job listings seen             New             JDs fetched
+  [REPEAT]
+  {{BOARD}}   {{MARKET}}   {{STATUS}}         {{JOB_LISTINGS_SEEN}}         {{NEW}}         {{JDS_FETCHED}}
+  [END REPEAT]
+  ---------------------------------------------------------------------------------------------------------
+  Total                                 {{TOTAL_JOB_LISTINGS_SEEN}}   {{TOTAL_NEW}}   {{TOTAL_JDS_FETCHED}}
+
+  Apify this month: USD {{SPENT}} of USD {{PLAN}}
+
+CLEANING · {{CLEANING_STATUS}}
+  Cleans each JD and groups copies of the same job.
+
+  Start                End                             Duration                Cost           From cache
+  {{CLEANING_START}}   {{CLEANING_END}}   {{CLEANING_DURATION}}   {{CLEANING_COST}}   {{CLEANING_CACHE}}
+
+PULL · {{PULL_STATUS}}
+  Copies the cleaned job listings from the collection database into the
+  sorting database, ready for triage.
+
+  Start            End                     Duration            Cost       From cache
+  {{PULL_START}}   {{PULL_END}}   {{PULL_DURATION}}   {{PULL_COST}}   {{PULL_CACHE}}
+
+  Took {{PULLED}} job listings first seen tonight. {{REPEATS_SUPPRESSED}} were repeats of jobs
+  seen in the last 30 days and were suppressed.
+
+TRIAGE · {{TRIAGE_STATUS}}
+  Drops job listings by title filter and language first. The LLM then
+  reads each remaining JD and decides if it is in scope for you.
+
+  Start              End                         Duration              Cost         From cache
+  {{TRIAGE_START}}   {{TRIAGE_END}}   {{TRIAGE_DURATION}}   {{TRIAGE_COST}}   {{TRIAGE_CACHE}}
+
+  The title filter removed {{TITLE_FILTER}} and the language cut removed {{LANGUAGE_CUT}},
+  so {{TRIAGE_SENT}} went to the LLM.
+  {{TRIAGE_PASSED}} passed on to extraction. {{TRIAGE_RETRIED}} were retried; {{TRIAGE_NO_ANSWER}} got no usable answer.
+
+EXTRACTION · {{EXTRACTION_STATUS}}
+  The LLM reads each JD that passed triage and pulls out its
+  requirements, such as required tools and credentials.
+
+  Start                  End                                 Duration                  Cost             From cache
+  {{EXTRACTION_START}}   {{EXTRACTION_END}}   {{EXTRACTION_DURATION}}   {{EXTRACTION_COST}}   {{EXTRACTION_CACHE}}
+
+  {{EXTRACTION_SENT}} sent. {{EXTRACTION_RETRIED}} were retried; {{EXTRACTION_NO_ANSWER}} got no usable answer.
+
+RULES AND PAGES · {{RULES_PAGES_STATUS}}
+  Your rules compare those requirements with your have and cannot lists
+  and put each job listing in a bucket. The Review tab is then rebuilt.
+
+  Start                   End                                   Duration                   Cost              From cache
+  {{RULES_PAGES_START}}   {{RULES_PAGES_END}}   {{RULES_PAGES_DURATION}}   {{RULES_PAGES_COST}}   {{RULES_PAGES_CACHE}}

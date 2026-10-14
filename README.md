@@ -4,7 +4,7 @@
 
 Back to Office runs B's searches across multiple job boards every day,
 collects new and updated listings, deduplicates the same jobs appearing across
-different sources, and filters and ranks what remains.
+different sources, and filters and buckets what remains.
 
 Instead of reading thousands of JDs, B reviews around 300 in a web interface,
 with the system surfacing the key reasons for and against each job. B makes the
@@ -24,7 +24,7 @@ as much of the work around that decision as possible.
   <picture>
     <source srcset="demo.webp" type="image/webp">
     <img src="demo.png" width="900"
-         alt="The Back to Office feed: roles grouped across boards, tiered S to E, with the duplicate group and job description side by side">
+         alt="The Back to Office feed mockup: roles grouped across boards, with the duplicate group and job description side by side">
   </picture>
 </p>
 
@@ -62,19 +62,18 @@ as much of the work around that decision as possible.
 │   ├─ build matching features such as MinHash and compare likely duplicates across boards   │
 │   └─ group listings that represent the same job under one canonical job                    │
 └──────────────────────────────────────────────┬─────────────────────────────────────────────┘
-                                               │  ~3,000 job listings to filter and rank
+                                               │  ~3,000 job listings to filter and bucket
                                                ▼
-┌─ 3 ─ filter and rank job listings ─────────────────────────────────────────────────────────┐
-│   ├─ rule-based logic to remove irrelevant job listings e.g. where the job title           │
-│   │  contains nurse, lawyer, electrician or sales manager; 16+ years experience            │
-│   │  demanded; the job listing is mostly in Thai or Chinese                                │
-│   ├─ LLM-based triage pass to filter out non-technical roles                               │
-│   ├─ key data extraction on the listings that pass triage — e.g. years                     │
-│   │  of experience, hard skills, certifications, work authorisation,                       │
-│   │  education, etc.                                                                       │
-│   └─ scoring and tiering: logic rules weigh the data extracted from each JD                │
-│      against B's profile and preferences, and tiers each JD from A to E. S-tier is a pin B │
-│      places by hand.                                                                       │
+┌─ 3 ─ filter and bucket job listings ───────────────────────────────────────────────────────┐
+│   ├─ pull the cleaned job listings needed for processing into PostgreSQL                   │
+│   ├─ rule-based title and language filters remove clearly irrelevant or ineligible         │
+│   │  listings before using the LLM                                                         │
+│   ├─ LLM-based triage filters out non-technical roles and other technical work outside     │
+│   │  the configured job preferences                                                        │
+│   ├─ structured extraction pulls the facts needed from listings                            │
+│   ├─ rule-based evaluation compares those facts with the configured preferences            │
+│   │  and places each job listing into its review bucket                                    │
+│   └─ suppress recent repeats with the same results and send the morning summary            │
 └──────────────────────────────────────────────┬─────────────────────────────────────────────┘
                                                │  ~300 new JDs to review each day
                                                ▼
@@ -83,24 +82,24 @@ as much of the work around that decision as possible.
 │  B reviews each JD that made it past triage and filtering in a web interface               │
 │   ├─ spend ~12 seconds per JD, ~1 hour for the ~300 JDs that arrive each day               │
 │   └─ back-to-office system surfaces the key points for and against each job, including     │
-│      the reasoning behind its assigned tier                                                │
+│      the reasoning behind its assigned bucket                                              │
 └──────────────────────────────────────────────┬─────────────────────────────────────────────┘
                                                │  ~100 jobs saved to apply
-                    ┌──────────────────────────┴────────────────────┐
-                    ▼                                               ▼
-┌─ 5a ─ tailor custom CV ──────────────┐  ┌─ 5b ─ research job opening and enrich data ──────┐
-│   ├─ read the JD and work out the    │  │   ├─ find the original job opening on the        │
-│   │  angle: what is really being     │  │   │  employer's careers site, where available    │
-│   │  hired for, and where B fits     │  │   ├─ extract any recruiter or hiring manager     │
-│   ├─ match that to B's evidence bank │  │   │  named in the JD, along with contact details │
-│   │  — real projects, numbers, dates │  │   │  if available                                │
-│   ├─ anti-hallucination pass: every  │  │   ├─ search the web for more information on the  │
-│   │  claim must trace to a line in   │  │   │  hiring manager, recruiter and relevant team │
-│   │  the bank, or it is cut and the  │  │   │  members, including LinkedIn profiles, phone │
-│   │  draft loops until clean         │  │   │  numbers and email addresses                 │
-│   └─ render an ATS-readable PDF      │  │   └─ store enriched data                         │
-└──────────────────────────────────────┘  └──────────────────────────────────────────────────┘
-                    └──────────────────────────┬────────────────────┘
+                    ┌──────────────────────────┴───────────┬───────────────────────────────────┐
+                    ▼                                      ▼                                   ▼
+┌─ 5a ─ tailor custom CV ──────────────┐  ┌─ 5b ─ find the direct listing ─┐  ┌─ 5c ─ enrich the job listing ──┐
+│   ├─ read the JD and work out the    │  │   ├─ find the original listing │  │   ├─ identify recruiters,      │
+│   │  angle: what is really being     │  │   │  for the selected job      │  │   │  likely hiring managers    │
+│   │  hired for, and where B fits     │  │   ├─ prefer the employer's     │  │   │  and relevant team members │
+│   ├─ match that to B's evidence bank │  │   │  careers site or its       │  │   ├─ find useful contact,      │
+│   │  — real projects, numbers, dates │  │   │  authorised application    │  │   │  profile and company       │
+│   ├─ anti-hallucination pass: every  │  │   │  portal                    │  │   │  information               │
+│   │  claim must trace to a line in   │  │   └─ identify where to apply,  │  │   └─ keep the findings with    │
+│   │  the bank, or it is cut and the  │  │      or say when no direct     │  │      their sources and why     │
+│   │  draft loops until clean         │  │      listing can be found      │  │      each person is relevant   │
+│   └─ render an ATS-readable PDF      │  │                                │  │                                │
+└──────────────────────────────────────┘  └────────────────────────────────┘  └────────────────────────────────┘
+                    └──────────────────────────┬───────────┴───────────────────────────────────┘
                                                ▼
 ┌─ 6 ─ apply for selected jobs ──────────────────────────────────────────────────────────────┐
 │   ├─ B submits job applications manually initially                                         │
@@ -109,17 +108,20 @@ as much of the work around that decision as possible.
 │   └─ use the job and contact data gathered earlier to send targeted outreach               │
 │      to relevant hiring managers or recruiters for selected applications                   │
 └──────────────────────────────────────────────┬─────────────────────────────────────────────┘
-                                               │
-                                               ▼
-┌─ 7 ─ track job applications ───────────────────────────────────────────────────────────────┐
-│   ├─ track links embedded in each CV; log clicks as indicators of recruiter interest       │
-│   │  and update the application database accordingly                                       │
-│   ├─ B's ElevenLabs assistant answers recruiter calls, answers common questions and        │
-│   │  gathers key information about the role and next steps                                 │
-│   ├─ log recruiter calls against the application and email B a summary after each call     │
-│   └─ track application progress — applied, recruiter interest, interview, offer,           │
-│      rejected or no response                                                               │
-└────────────────────────────────────────────────────────────────────────────────────────────┘
+                                               │                          incoming recruiter call
+                           ┌───────────────────┘                                     │
+                           │                                                         ▼
+                           │                                                    ElevenLabs
+                           │                                                         │
+                           ▼                                                         ▼
+┌─ 7a ─ track job applications ──────────────────────┐    ┌─ 7b ─ report recruiter calls ──────────────────────┐
+│   ├─ keep each application, its CV and links       │    │   ├─ receive completed recruiter calls from        │
+│   │  together                                      │    │   │  ElevenLabs                                    │
+│   ├─ record activity on CV links as possible signs │    │   └─ email B the call details, transcript and      │
+│   │  of interest                                   │    │      recording when available                      │
+│   └─ track progress, notes and next steps after    │    │                                                    │
+│      applying                                      │    │                                                    │
+└────────────────────────────────────────────────────┘    └────────────────────────────────────────────────────┘
 ```
 
 ## Structure
@@ -136,12 +138,12 @@ back-to-office/
     ├── fetch_job_listings/    # 1 — find and ingest new job listings
     │                          #     http_client.py and apify_client.py live in here
     ├── clean_job_listings/    # 2 — standardize and canonicalize job listings
-    ├── filter_and_rank/       # 3 — filter jobs and sort into tiers
+    ├── filter_and_bucket_job_listings/ # filter jobs into review buckets
     ├── review_jds/            # 4 — review JDs and decide which jobs to apply for
     ├── tailor_cvs/            # 5a — tailor custom CVs for each job application
-    ├── research_job_listing/  # 5b — research openings and hiring team
+    ├── research_job_listing/  # 5b — find the direct listing
     ├── apply_for_jobs/        # 6 — applications and targeted outreach
-    ├── track_applied_jobs/    # 7 — track application interest and progress
+    ├── track_applied_jobs/    # 7a — track application interest and progress
     │
     ├── web/                   # web interface and API
     ├── analytics/             # data analyses

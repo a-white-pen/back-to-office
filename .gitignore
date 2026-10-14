@@ -7,15 +7,27 @@
 # a local copy of the box's root-owned /etc/bto/env
 etc-bto-env
 
+# Private web authentication configuration; the safe example stays public.
+/src/bto/web/auth_config.py
+
 # ─── personal data — never commit (this repo is PUBLIC) ──────
 cv-bank/
 applications/
 # private notes and machine-local config, in any folder
 **/*.local.md
 **/*.local.json
+**/*.local.py
 # search strategy is private local configuration, any board, present
 # or future; searches.example.py is the committed template
 searches.py
+
+# Production LLM prompts and private implementation material stay local.
+/src/bto/filter_and_bucket_job_listings/preferences/*
+!/src/bto/filter_and_bucket_job_listings/preferences/*.example.py
+/src/bto/filter_and_bucket_job_listings/triage_prompt.py
+/src/bto/filter_and_bucket_job_listings/extraction_prompt.py
+/src/bto/filter_and_bucket_job_listings/specifications/
+/src/bto/filter_and_bucket_job_listings/IMPLEMENTATION_HANDOVER.md
 
 # ─── tests — kept local, not published ───────────────────────
 # fixtures are real provider captures
