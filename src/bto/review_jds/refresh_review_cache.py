@@ -58,7 +58,12 @@ def snapshot(markup, now):
     return stamp, "refreshing" in text.casefold()
 
 
-def refresh(config=None, *, timeout=600, wait=time.sleep, clock=None, monotonic=time.monotonic, opener=None):
+# The serving builder permits 900 seconds. Allow an existing build, the
+# requested fresh build, the minute boundary and bounded read recovery.
+REFRESH_TIMEOUT_SECONDS = 2100
+
+
+def refresh(config=None, *, timeout=REFRESH_TIMEOUT_SECONDS, wait=time.sleep, clock=None, monotonic=time.monotonic, opener=None):
     """Use normal login/CSRF and the existing admin POST; never starts model work."""
     config = config or configuration()
     clock = clock or (lambda: datetime.now(ZoneInfo("Asia/Singapore")))
@@ -130,7 +135,7 @@ def refresh(config=None, *, timeout=600, wait=time.sleep, clock=None, monotonic=
         after, building = snapshot(page, clock())
         if after >= requested_minute and not building:
             return {"status": "complete", "previous_snapshot": before.isoformat(), "requested_after": requested_minute.isoformat(), "confirmed_snapshot": after.isoformat(), "confirmed_at": clock().isoformat(), "read_recovery": failures, "post_receipt_uncertain": receipt_uncertain}
-    raise RefreshFailed("Review cache did not confirm a completed fresh snapshot within ten minutes")
+    raise RefreshFailed("Review cache did not confirm a completed fresh snapshot within the bounded serving-cache recovery window")
 
 
 def main():

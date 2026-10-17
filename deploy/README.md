@@ -46,7 +46,9 @@ to POST the existing `/review/cache/rebuild` action. It waits for a newer,
 completed snapshot before success. The UI exposes minute precision, so the
 request crosses a minute boundary before rebuilding. Reads have bounded
 recovery; a lost rebuild receipt is checked by reads rather than another POST.
-Failure to confirm freshness within ten minutes is a terminal publication
+The existing builder permits 15 minutes per build. The handoff allows up to
+35 minutes for an in-progress build, the requested fresh build and read recovery.
+Failure to confirm freshness within that bound is a terminal publication
 failure. The previous snapshot remains usable. No serving UI code is deployed.
 
 Required private configuration adds `GEMINI_TRIAGE_JOBS_API_KEY`,
