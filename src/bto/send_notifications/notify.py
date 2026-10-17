@@ -1051,6 +1051,16 @@ def render_terminal_nightly(report):
                 CLEANING_END=end.astimezone(SINGAPORE).strftime("%-I:%M %p"),
                 CLEANING_DURATION=str(timedelta(seconds=int((end-begin).total_seconds()))),
                 CLEANING_STATUS="ok" if cleaning_stage["status"] == "complete" else "failed")
+        cleaning_notes = report.get("cleaning", {}).get("notes", [])
+        if cleaning_notes:
+            context["failed_steps"] = [*context.get("failed_steps", []), *[
+                {"STEP": "Cleaning", "STATUS": "partial", "ERROR": note,
+                 "MISSING_FROM_REVIEW": "Quarantined observations; see cleaning diagnostics",
+                 "STATUS_COLOUR": "#9a6700"} for note in cleaning_notes
+            ]]
+            context["conditions"] = {**context.get("conditions", {}),
+                                     "ANY PROBLEMS OR ROUTINE NOTES": True}
+            context.update(CLEANING_STATUS="partial", CLEANING_STATUS_COLOUR="#9a6700")
         subject, plain, markup = render_morning_email(context)
     else:
         subject, plain, markup = "BTO nightly run", "", "<html><body></body></html>"

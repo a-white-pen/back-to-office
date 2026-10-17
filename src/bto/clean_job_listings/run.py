@@ -1407,7 +1407,14 @@ def _summary(config, args, result, began):
     """
     if config.get("combined_nightly_email"):
         from bto.filter_and_bucket_job_listings.call_gemini_batch import save, timestamp
-        save(Path("data/job_sorting/cleaning-outcome.json"), {"at": timestamp(), "status": "complete", "summary": result})
+        path = Path("data/job_sorting/cleaning-outcome.json")
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        notes = []
+        if began and previous.get("at", "") >= began.isoformat():
+            notes = previous.get("notes", [])
+            if previous.get("error"):
+                notes = [*notes, previous["error"]]
+        save(path, {"at": timestamp(), "status": "complete", "summary": result, "notes": notes})
         return
     if result is None or args.target_suffix or args.stage not in ("nightly", "all"):
         return

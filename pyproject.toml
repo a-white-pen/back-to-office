@@ -1,6 +1,6 @@
 [project]
 name = "bto"
-version = "0.2.2"
+version = "0.2.3"
 description = "Back to Office — a personal job-search system"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
