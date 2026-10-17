@@ -171,12 +171,37 @@ def _metadata_field(metadata, field):
     return None
 
 
+# These declared web/email assets are not Python import candidates. Everything
+# else under the package must still be source; native extensions, bytecode and
+# undeclared data remain refused even beside an allowed asset.
+PACKAGE_RESOURCES = frozenset({
+    "bto/send_notifications/templates/collection_failed.html",
+    "bto/send_notifications/templates/collection_failed.txt",
+    "bto/send_notifications/templates/morning_email.html",
+    "bto/send_notifications/templates/morning_email.txt",
+    "bto/send_notifications/templates/subjects.txt",
+    "bto/web/static/app.css",
+    "bto/web/static/app.js",
+    "bto/web/templates/_card.html",
+    "bto/web/templates/_listing.html",
+    "bto/web/templates/_review_history.html",
+    "bto/web/templates/_review_role.html",
+    "bto/web/templates/applied.html",
+    "bto/web/templates/base.html",
+    "bto/web/templates/login.html",
+    "bto/web/templates/review.html",
+    "bto/web/templates/taxonomy.html",
+    "bto/web/templates/to_apply.html",
+})
+
+
 def archive_problems(wheel):
     """Everything in the archive that could change what executes without
     touching the hashed modules: duplicate members (a second copy of a path
     wins on install); members outside the package and its one dist-info
     directory, and `.pth` files anywhere (they run or install code); under
-    `bto/` anything but `.py` source — Python imports an extension module
+    `bto/` anything but `.py` source or the exact declared web/email assets —
+    Python imports an extension module
     (`.so`, `.pyd`) in preference to a `.py` of the same stem and executes
     a hash-unchecked `__pycache__` `.pyc` without reading the `.py`; a
     directory named like a module (`bto/x/mod/` beside `bto/x/mod.py`),
@@ -210,11 +235,10 @@ def archive_problems(wheel):
                 problems.append(f"{name}: unexpected archive member (a .pth "
                                 f"file runs at interpreter start-up)")
             elif name.startswith("bto/"):
-                if not name.endswith(".py") or "__pycache__" in parts:
-                    problems.append(f"{name}: only .py source modules belong "
-                                    f"under bto/ (an extension module, bytecode "
-                                    f"or data file could be imported instead of "
-                                    f"a verified module)")
+                if (not name.endswith(".py") and name not in PACKAGE_RESOURCES) or "__pycache__" in parts:
+                    problems.append(f"{name}: only .py source and declared web/email assets "
+                                    f"belong under bto/ (an extension module, bytecode "
+                                    f"or undeclared file could replace a verified module)")
             elif not _DIST_INFO.match(name):
                 problems.append(f"{name}: unexpected archive member (only bto/ "
                                 f"modules and one bto-*.dist-info/ belong here)")
