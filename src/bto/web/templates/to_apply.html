@@ -1,1 +1,31 @@
-{# To apply page presentation for the downstream BTO workflows. #}
+{% extends 'base.html' %}{% block title %}BTO · To apply{% endblock %}{% block body %}
+<div class="application-shell" data-application-shell data-application-view="submit">
+<aside class="application-rail">
+<div class="rail-tabs"><div class="segmented" role="tablist" aria-label="Application preparation">
+<button role="tab" aria-selected="true" data-application-tab="submit">Submit</button><button role="tab" aria-selected="false" data-application-tab="prepare">Prepare</button>
+</div></div>
+<div class="rail-controls submit-controls"><button class="chip" disabled>★ first, then bucket <span class="chevron">▾</span></button><button class="chip" disabled><span class="control-label">Lane</span> All <span class="chevron">▾</span></button></div>
+<div class="rail-controls prepare-controls"><button class="chip" disabled><span class="control-label">Lane</span> All <span class="chevron">▾</span></button><button class="chip" disabled><span class="gold">★</span> only</button></div>
+<div class="rail-empty"><p class="control-label" data-application-heading>Submit</p><p>Application workflow not connected.</p></div>
+<div class="rail-footer submit-controls">Batch information unavailable.</div>
+<div class="run-selection prepare-controls"><p class="control-label">What to run</p><p>Application preparation is not connected.</p><button class="accent-button" disabled>▸ Run selected</button></div>
+</aside>
+<main class="application-body">
+<header class="application-header">
+<button class="application-star" disabled aria-label="Star application">☆</button>
+<div class="application-heading"><p class="eyebrow">To apply</p><h1>No application selected</h1></div>
+<div class="apply-links"><span class="control-label">Apply here</span><button class="accent-button" disabled>Unavailable ↗ <span class="key-hint">O</span></button><button class="chip outline-accent" disabled>Original listing ↗ <span class="key-hint">L</span></button></div>
+<span class="separator"></span><div class="header-fact"><span class="control-label">People</span><span class="muted">—</span></div>
+<div class="header-fact"><span class="control-label">Referral</span><button class="text-accent" disabled>+ Add</button></div>
+<span class="separator"></span><div class="application-position"><button disabled aria-label="Previous application">‹</button><span>—</span><button disabled aria-label="Next application">›</button></div>
+</header>
+<div class="application-panes">
+<section class="cv-pane" aria-label="CV">
+<div class="pane-toolbar"><div class="segmented cv-tabs" aria-label="CV view"><button disabled>PDF</button><button disabled>Edit</button><button class="draft-preview" disabled>Draft preview</button></div><span class="toolbar-spacer"></span><button class="history-control" disabled>History ▾</button><button class="chip download-control" disabled>Download</button></div>
+<div class="cv-scroll"><div class="paper-empty"><p class="control-label">Tailored CV</p><h2>CV functionality not connected</h2><p>CV generation and editing will be available after application preparation is integrated.</p></div></div>
+</section>
+<section class="application-jd" aria-label="Job listing"><header class="jd-toolbar"><span class="control-label">Job listing</span><span class="eyebrow">—</span></header><div class="jd-unavailable"><h2>No application selected</h2><p>The selected application's listing will appear here.</p></div></section>
+</div>
+<footer class="application-footer"><span class="log-label">Log</span><input disabled aria-label="Application log" placeholder="Application logs are not connected"><button class="primary" disabled>Mark submitted <span class="key-hint">M</span></button><button class="chip skip-control" disabled>Skip <span class="key-hint">J</span></button><button class="chip discard-control" disabled aria-label="Discard" title="Discard">⋯</button></footer>
+</main>
+</div>{% endblock %}

@@ -1,1 +1,15 @@
-{# Taxonomy/info page, reached from shared navigation. Content will be rebuilt. #}
+{% extends 'base.html' %}{% block title %}BTO · Taxonomy{% endblock %}{% block body %}<main class="taxonomy">
+<div class="taxonomy-top"><p>Back to Office · taxonomy</p><a href="{{ url_for('review.review') }}">← Review</a></div>
+<h1>Taxonomy and definitions</h1>
+<div class="notice">
+<h2>Definitions are being updated.</h2>
+<p>This page's content will be replaced. Review uses the current sorting rules.</p>
+</div>
+<nav class="section-links">
+<span>Review buckets</span>
+<span>Listing history</span>
+<span>Review sidebar</span>
+<span>Application stages</span>
+<span>Referral</span>
+</nav>
+</main>{% endblock %}

@@ -139,6 +139,8 @@ def load():
 
         "apify_token": get("APIFY_TOKEN") or "",
 
+        "combined_nightly_email": get("BTO_COMBINED_NIGHTLY_EMAIL", "0") == "1",
+
         # Email. Unset SMTP means alerts are logged and collection carries on.
         "smtp_host": get("SMTP_HOST") or "",
         "smtp_port": _int("SMTP_PORT", "587"),
@@ -179,3 +181,13 @@ def enabled_runs():
 
 def supported_runs():
     return list(SUPPORTED)
+
+
+def load_postgres(fallback=None):
+    """Load libpq settings without requiring analytical/provider settings."""
+    fallback = _dotenv() if fallback is None else fallback
+    for key in ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"):
+        if key not in os.environ and fallback.get(key):
+            os.environ[key] = fallback[key]
+    if not os.environ.get("PGDATABASE"):
+        raise ValueError("PGDATABASE is missing from private configuration")

@@ -228,7 +228,7 @@ response with billable usage.
 | Column | PostgreSQL Type | Nullable | Description |
 | :--- | :--- | :---: | :--- |
 | `gemini_response_id` | `TEXT` | No | Google's unique `responseId` for the Gemini response. Primary key. |
-| `service_tier` | `TEXT` | No | Gemini service tier Google reports for the call, such as `flex` or `standard`. |
+| `service_tier` | `TEXT` | No | Gemini billing path: `batch` for a response retrieved from its verified Batch resource; otherwise the service tier Google reports, such as `flex` or `standard`. |
 | `input_tokens` | `INTEGER` | No | Non-cached input tokens charged at the normal input price. |
 | `cached_tokens` | `INTEGER` | No | Input tokens served from cache and charged at the cached-input price. Store zero when none are reported. |
 | `output_tokens` | `INTEGER` | No | Billed output tokens, including thinking tokens where applicable. |
@@ -249,7 +249,7 @@ response with billable usage.
 | Column | PostgreSQL Type | Nullable | Description |
 | :--- | :--- | :---: | :--- |
 | `gemini_response_id` | `TEXT` | No | Google's unique `responseId` for the Gemini response. Primary key. |
-| `service_tier` | `TEXT` | No | Gemini service tier Google reports for the call, such as `flex` or `standard`. |
+| `service_tier` | `TEXT` | No | Gemini billing path: `batch` for a response retrieved from its verified Batch resource; otherwise the service tier Google reports, such as `flex` or `standard`. |
 | `input_tokens` | `INTEGER` | No | Non-cached input tokens charged at the normal input price. |
 | `cached_tokens` | `INTEGER` | No | Input tokens served from cache and charged at the cached-input price. Store zero when none are reported. |
 | `output_tokens` | `INTEGER` | No | Billed output tokens, including thinking tokens where applicable. |
@@ -265,7 +265,7 @@ tokens plus thinking tokens where Gemini bills thinking at the output price.
 prices for the call's service tier. Prices can change and are not fixed by this
 contract.
 
-The nightly spend ceiling sums `cost_usd` across both Gemini cost tables. The
+The nightly spend ceiling includes actual `cost_usd` across both Gemini cost tables; durable private Batch checkpoints also retain outstanding finite billing bounds and accounting gaps. The
 morning email can derive cache share from the stored `input_tokens` and
 `cached_tokens` counts. Cache-storage charges are not recorded in these
 per-call tables.

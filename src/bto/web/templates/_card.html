@@ -1,1 +1,5 @@
-{# Shared job/card presentation where pages genuinely reuse it. #}
+<a class="job-card" href="{{ url_for('review.review',id=job.id) }}">
+<span class="eyebrow">{{ job.advertiser_name or 'Advertiser not supplied' }} · {{ job.market|upper }}</span>
+<strong>{{ job.title or 'Title not supplied' }}</strong>
+<span class="bucket {{ job.bucket or 'not_sorted' }}">{{ bucket_labels.get(job.bucket,'Awaiting assessment') }}</span>
+</a>

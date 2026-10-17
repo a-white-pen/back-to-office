@@ -7,15 +7,16 @@ cleans and deduplicates them, and is intended to support filtering and
 bucketing, CV tailoring and application tracking.
 
 The implemented packages are `fetch_job_listings`, `clean_job_listings`,
-`send_notifications`, `storage/databricks`, and `storage/postgres` (costs).
-Databricks is the analytical lakehouse; PostgreSQL currently records
-operational cost data. `filter_and_bucket_job_listings` and `sync` contain the
-filtering, bucketing and job-listing transfer scaffold; processing is not
-implemented. The PostgreSQL data dictionary records the decided table contracts.
+`send_notifications`, `storage/databricks`, `storage/postgres`, `filter_and_bucket_job_listings`,
+`sync`, `review_jds` and `web`. Databricks is the analytical lakehouse; PostgreSQL
+records operational costs and job-sorting history/results. Sorting uses durable
+Gemini Batch jobs; the nightly workflow owns terminal email and serving-cache
+refresh. Review is PostgreSQL-backed; application workflow pages remain shells.
+The PostgreSQL data dictionary owns the table contracts.
 
 These other namespaces are reserved and contain only initializers:
-`review_jds`, `tailor_cvs`, `research_job_listing`, `apply_for_jobs`,
-`track_applied_jobs`, `web`, `analytics`, `record_costs`, and `storage/s3`.
+`tailor_cvs`, `research_job_listing`, `apply_for_jobs`, `track_applied_jobs`,
+`analytics`, `record_costs`, and `storage/s3`.
 Their presence does not mean their behavior, schemas or architecture have
 been decided.
 
@@ -74,8 +75,9 @@ quirks and safety boundaries.
   for. No new or heavy dependency without a concrete need and approval.
 - **Bronze volumes are immutable.** Fix a parsing bug by re-reading the raw
   file, never by editing one.
-- Current Silver products are rebuildable. PostgreSQL currently stores costs;
-  filtering and bucketing table contracts are documented. Future review/application state remains unimplemented.
+- Current Silver products are rebuildable. PostgreSQL stores costs and the
+  locked filtering/bucketing contracts. Review reads those results; future
+  application state remains unimplemented.
 - **Collection isolates each board × market run.** A controlled provider/run
   failure does not stop other pairs or make a normally completed collection
   command exit nonzero. Normal completion writes the finished handoff and

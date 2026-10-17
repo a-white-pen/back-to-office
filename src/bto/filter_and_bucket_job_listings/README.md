@@ -2,14 +2,14 @@
 
 After cleaning, this workflow prepares job listings for manual review: it
 filters, assesses requirements, assigns review buckets and suppresses repeats.
-This is a scaffold; processing will follow the agreed specification.
+Processing, storage and Review share the implemented deterministic rules.
 
 ## How filtering and bucketing work
 
 `run.py` calls the pull into PostgreSQL, then applies cheap filters before
-Gemini. Extraction starts as individual listings pass triage, so triage and
-extraction overlap. Evaluation, bucketing and repeat suppression follow, then
-the morning email.
+Gemini. Distinct inputs go to triage Batch; after validation, persistence and
+free triage-dependent logic, missing PASS inputs go to extraction Batch.
+Evaluation, bucketing, repeat suppression and final validation follow.
 
 Manual review reuses requirement evaluation. Review page queue construction,
 grouping and ordering belong to manual review.
@@ -20,8 +20,13 @@ grouping and ordering belong to manual review.
 src/bto/filter_and_bucket_job_listings/
 ├── __init__.py                               # package marker
 ├── README.md                                 # package orientation
+├── config.py                                 # validate private data and render prompts
 ├── run.py                                    # coordinate the night and re-sorts
-├── call_gemini.py                            # shared cache, pricing, retries and spend ceiling
+├── call_gemini.py                            # model identity, hashes and usage pricing
+├── prepare_batches.py                        # free rules and exact-result reuse
+├── estimate_batches.py                       # fresh cohort/token billing estimate
+├── call_gemini_batch.py                       # durable Batch transport and correlation
+├── run_batches.py                            # dependent stages, ingestion and recovery
 ├── filter_job_titles.py                      # cheap title fail/protect filter
 ├── filter_non_english_jds.py                 # cheap non-English JD filter
 ├── triage_job_listings.py                    # run and validate job triage
@@ -64,12 +69,12 @@ src/bto/sync/
 | 6. Evaluate job requirements | `evaluate_job_requirements.py` | Compare requirements with configured experience, qualifications and market rules; produce For, Against, Other asks, lacks, walls and years position. | `preferences/years_of_experience.py`, `preferences/skills_and_qualifications.py`, `preferences/market_preferences.py` |
 | 7. Bucket job listings | `bucket_job_listings.py` | Apply ordered bucket/reason rules; finalise recruitment-firm and public-sector status using configuration and extraction where appropriate. | `preferences/job_preferences.py`, `preferences/market_preferences.py`, `preferences/employer_classification.py` |
 | 8. Suppress repeated job listings | `suppress_repeated_job_listings.py` | Compare a different board listing in the 30 days before this wording's first-seen night, under today's matching bucket/reason/lacks. Titles ignore case/extra spaces; target the earliest qualifying other listing. | None |
-| 9. Finish the night | `run.py`, `../send_notifications/notify.py` | Finish deterministic work and send the morning email through existing notification machinery. | None |
+| 9. Finish the night | `run.py`, `../send_notifications/notify.py` | Finish deterministic work and send one terminal nightly email through existing notification machinery. | None |
 
 ## Private preferences
 
 Real files are private, gitignored and contain data only: no functions or
-business logic. Values remain unconfigured. The public `.example.py` files
+business logic. The public `.example.py` files
 show safe dummy structures; they are not runtime imports or working defaults.
 
 | File | What it contains | Where it is used |
@@ -83,7 +88,7 @@ show safe dummy structures; they are not runtime imports or working defaults.
 
 ## Prompts
 
-The private `triage_prompt.py` and `extraction_prompt.py` remain unpopulated.
+The private `triage_prompt.py` and `extraction_prompt.py` supply the production prompts.
 Their public `triage_prompt.example.py` and `extraction_prompt.example.py`
 templates show the listing-specific closing instruction and output-contract
 positions. Triage injects `kinds_of_work` and `packages`; extraction injects
@@ -95,11 +100,17 @@ prompt files do not duplicate the lists.
 
 ### Normal nightly run
 
-`run.py` calls the state-based pull after cleaning. Triage/extraction use
-**Flex throughout**, with **one shared USD 10 ceiling**. At **8:30 AM Singapore
-time**, stop starting new reads; sent calls finish before free processing and
-the normal morning summary. Deferred work carries forward; failed-twice
-wordings are terminal.
+`run.py` reconciles a proven-current cleaned publication into PostgreSQL, then
+runs triage and extraction through Gemini Batch with one shared USD 10 ceiling.
+There is no morning model-processing cutoff. Stable item IDs, immutable private
+submission records and saved remote job IDs allow safe resumption. Network loss
+reconnects to the same job. PostgreSQL ownership is released while Google works.
+
+Exact results and free filters run before a fresh estimate. Conservative
+expected billing must fit the authorised ceiling; finite request/output bounds
+also protect outstanding asynchronous billing. Invalid visible answers retain
+the two-attempt rule. Provider errors, submission uncertainty, polling loss and
+database failures have separate bounded recovery policies.
 
 ### Initial history and catch-up
 
@@ -109,9 +120,9 @@ are history-only Not sorted, with reason `not read: before processing window`,
 excluded from the normal queue and preference re-sorts. Initially incomplete
 suppression against unjudged old history is accepted.
 
-The paid catch-up is Flex only without the ordinary cutoff. Recalculate calls,
-cost and runtime immediately beforehand and obtain Belinda's explicit go;
-the cache covers the whole run.
+Paid catch-up uses the same two-stage Batch path and a fresh estimate, under
+explicit spend authority. Historical Flex ledgers remain separate retained
+records. Any explicit prompt cache covers asynchronous processing and recovery.
 
 ### Re-sort and notification
 
@@ -119,8 +130,9 @@ Free preference re-sorts reuse stored results; repeat windows stay anchored to
 `wording_first_seen_at`. Existing notification machinery uses the approved
 [template sources](../send_notifications/templates/). Bucket totals count
 new/changed listing wordings first pulled tonight; carried-forward work counts
-in read/cost totals. Failed runs or partials with lost search coverage get the
-collection-failed email; other partials are morning notes.
+in read/cost totals. The complete nightly chain sends one terminal completion/failure email at its
+actual finish. Failed/partial collection and routine notes are included there;
+there are no per-stage success messages or arbitrary morning status messages.
 
 ## Storage
 
@@ -136,3 +148,48 @@ the [PostgreSQL data dictionary](../storage/postgres/data-dictionary.md).
 `job_sorting.job_listings` stores cleaned listing wordings, history, reusable
 Gemini-result links and filtering/bucketing results. Its contract is also
 defined there.
+
+## Local entry points and execution gates
+
+Install with `python -m pip install -e '.[web,dev]'`. Private files are literal
+assignments, validated before processing. The safe examples show their shapes.
+
+- Verify the existing locked tables: `python -m bto.storage.postgres.setup_job_sorting`.
+  Setup creates missing tables only with the explicit `--create` flag; it never
+  repairs or alters an existing contract.
+- History load, after approval: `python -m bto.filter_and_bucket_job_listings.run
+  --mode history-load --execute-load`. This mode never loads Gemini keys or calls it.
+- Approved nightly execution: `python -m bto.filter_and_bucket_job_listings.run
+  --mode night --allow-gemini --send-email`.
+- Approved catch-up: use `--mode catch-up --allow-gemini --ceiling-usd AMOUNT`;
+  the ceiling must be explicitly agreed from a fresh estimate. If the owner explicitly
+  authorises admission by expected cost, add `--estimate-basis expected`; the
+  conservative estimate is still reported and finite submission bounds still
+  protect the remaining ceiling. Normal nights keep conservative admission.
+- Free deterministic re-sort: `python -m bto.filter_and_bucket_job_listings.run
+  --mode re-sort`.
+- Bucket validation: `python -m bto.filter_and_bucket_job_listings.run --mode report`.
+
+Runtime checkpoints and email previews live in ignored `data/job_sorting/`.
+A partial pull retains its source versions, original watermark and completed
+buckets. Resume with the same mode and state directory. An incomplete history
+load blocks ordinary pulling. Results and costs commit as calls complete;
+validated identical inputs share results across rows. A canonical host-level guard prevents competing Batch submissions. Short
+PostgreSQL advisory ownership protects preparation and idempotent ingestion;
+no database ownership is held during remote processing.
+
+The fetch timer invokes `bto.nightly`, which runs collection → cleaning
+→ Batch sorting → final validation → serving snapshot refresh → one terminal
+email. Standalone collection/cleaning commands retain their manual alerts.
+Scheduled sorting confirms the existing authenticated cache rebuild before
+completion. Manual runs refresh it only with explicit `--refresh-review`.
+
+Tests require an explicitly isolated `BTO_SORTING_TEST_DSN`; integration tests
+reject the production tunnel. Provider responses are mocked. Initial history,
+paid verification/catch-up, real recipient emails and public deployment require
+separate approval. Before any paid run, verify reported tiers/usage, current
+pricing, caching, eligible inputs, retry allowance and runtime.
+
+Scheduled sorting uses `--refresh-review` to confirm the existing serving
+snapshot refresh after final validation. Private serving credentials and
+rollback/recovery steps belong to the [deployment guide](../../../deploy/README.md).

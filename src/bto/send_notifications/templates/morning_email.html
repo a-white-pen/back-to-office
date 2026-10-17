@@ -12,7 +12,7 @@ Subject (all done):     BTO · {{DATE}} · Top picks {{TOP_PICKS_TOTAL}} · In l
 Subject (not finished): BTO · {{DATE}} · NOT FINISHED · stopped during {{STEP}}
 Placeholders: {{UPPER_SNAKE}}. "IF X" … "END IF" and "REPEAT x" … "END REPEAT" comments mark conditional and repeated parts.
 {{..._COLOUR}} for a status word: ok #1f883d · partial #9a6700 · failed #cf222e.
-STATUS_LINE: "All done at 6:12 AM." · "Stopped at 8:30 AM during extraction: 312 job listings Not sorted."
+STATUS_LINE: "All done at 6:12 AM." · "Stopped during extraction: 312 job listings Not sorted."
 Time and spend, same format everywhere:
   Start / End   h:mm AM, Singapore time      e.g. 3:30 AM
   Duration      Xh MMm                        e.g. 1h 10m, 0h 05m
@@ -37,9 +37,9 @@ Lacks this week (Mondays only, last 7 nights):
 Cost section (triage and extraction only):
   Half price / Full price    listings read at that price, e.g. 4,082
   Cost                       USD X.XX; USD 0.00 when none
-  Flex only throughout. Normal nights start no new read after 8:30 AM Singapore
-  time; sent calls may finish. Initial catch-up has no ordinary-night deadline
-  and needs fresh calls/cost/runtime estimates and Belinda's explicit go.
+  Gemini Batch throughout, with no morning processing cutoff. Completion follows
+  final validation and the serving snapshot refresh. Initial catch-up needs
+  fresh calls/cost/runtime estimates and Belinda's explicit go.
   FULL_LISTINGS / FULL_COST  triage + extraction at full price
   READS_COST                 triage + extraction, the spend the ceiling applies to
   CEILING                    USD 10.00 shared normal-night ceiling
@@ -96,7 +96,7 @@ Apify line: SPENT and PLAN as X.XX for the current billing month.
 </table>
 <!-- END IF -->
 <h2 style="margin:32px 0 10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;line-height:1.3;font-weight:600;">Cost</h2>
-<p style="margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;margin:0 0 8px;"><i>Triage and extraction run at Google’s half price using Flex throughout. On normal nights, no new read starts after 8:30 AM; calls already sent may finish.</i></p>
+<p style="margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;margin:0 0 8px;"><i>Triage and extraction run at Google’s half price using Gemini Batch. The night finishes after both Batch stages, validation and the Review cache refresh complete.</i></p>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.4;margin:0 0 10px;width:100%;">
 <tr><th align="left" bgcolor="#f3f4f6" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;background-color:#f3f4f6;color:#1f2328;font-weight:600;font-size:13px;text-align:left;"></th><th align="right" bgcolor="#f3f4f6" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;background-color:#f3f4f6;color:#1f2328;font-weight:600;font-size:13px;text-align:right;">Half price</th><th align="right" bgcolor="#f3f4f6" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;background-color:#f3f4f6;color:#1f2328;font-weight:600;font-size:13px;text-align:right;">Cost</th><th align="right" bgcolor="#f3f4f6" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;background-color:#f3f4f6;color:#1f2328;font-weight:600;font-size:13px;text-align:right;">Full price</th><th align="right" bgcolor="#f3f4f6" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;background-color:#f3f4f6;color:#1f2328;font-weight:600;font-size:13px;text-align:right;">Cost</th><th align="right" bgcolor="#f3f4f6" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;background-color:#f3f4f6;color:#1f2328;font-weight:600;font-size:13px;text-align:right;">Total</th></tr>
 <tr><td align="left" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;text-align:left;">Triage</td><td align="right" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;text-align:right;white-space:nowrap;">{{TRIAGE_HALF_LISTINGS}}</td><td align="right" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;text-align:right;white-space:nowrap;">{{TRIAGE_HALF_COST}}</td><td align="right" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;text-align:right;white-space:nowrap;">{{TRIAGE_FULL_LISTINGS}}</td><td align="right" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;text-align:right;white-space:nowrap;">{{TRIAGE_FULL_COST}}</td><td align="right" style="border:1px solid #d0d7de;padding:7px 12px;vertical-align:top;text-align:right;white-space:nowrap;">{{TRIAGE_COST}}</td></tr>

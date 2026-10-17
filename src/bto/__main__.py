@@ -199,6 +199,29 @@ def summarise_execution(settings, handoff_path=None):
 
 def cmd_summarise(args):
     settings = settings_module.load()
+    if args.collection_problems_only:
+        from datetime import timezone
+
+        settings["run_handoff_path"] = args.handoff or settings["run_handoff_path"]
+        dbx = Databricks(
+            settings["databricks_host"],
+            settings["databricks_token"],
+            settings["databricks_warehouse_id"],
+            refusal_retries=0,
+        )
+        try:
+            handoff, rows = notify.read_collection(dbx, settings)
+            context = notify.collection_context(
+                rows, handoff.get("state") == "finished", datetime.now(timezone.utc)
+            )
+            if not context["problem_runs"]:
+                return 0
+            subject, plain, html = notify.render_collection_email(context)
+            return 0 if notify.send_email(settings, subject, plain, html=html) else 1
+        except Exception as error:
+            log.error("collection report unavailable error_type=%s", type(error).__name__)
+            notify.send_summary_unavailable(settings, "collection", type(error).__name__)
+            return 1
     sent = summarise_execution(settings, handoff_path=args.handoff)
     return 0 if sent else 1
 
@@ -222,6 +245,8 @@ def main(argv=None):
     summarise.add_argument("--handoff", default=None,
                            help="path to a fetch-execution handoff file "
                                 "(default: the configured RUN_HANDOFF_PATH)")
+    summarise.add_argument("--collection-problems-only", action="store_true",
+                           help="approved collection failure/coverage-loss email only")
     summarise.set_defaults(func=cmd_summarise)
 
     preflight = commands.add_parser("preflight",

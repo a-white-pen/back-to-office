@@ -6,8 +6,8 @@ Keep the cannot-do groups distinct; triage specifically needs Platforms.
 """
 
 SKILLS_AND_QUALIFICATIONS = {
-    "languages": [{"name": "Example language", "level": "Example level"}],
-    "highest_degree": "Example degree",
+    "languages": [{"name": "Example language", "level": "held"}],
+    "highest_degree": "degree",
     "has": ["Example qualification"],
     "industries_held": ["Example industry"],
     "industries_lacked": ["Another example industry"],

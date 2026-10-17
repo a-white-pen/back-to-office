@@ -1,22 +1,28 @@
-"""Public structure for the private triage prompt; no production content.
+"""Safe shape for the private prompt; illustrative instructions only."""
 
-The caller will inject kinds_of_work from preferences/job_preferences.py and
-packages from preferences/skills_and_qualifications.py. Preference lists
-stay in those files; they are not copied into the prompt. This is a template,
-not a working prompt or processing implementation.
-"""
+PROMPT = "Example triage instructions.\n{kinds_of_work}\n{packages}"
 
-PROMPT = """Example triage instructions.
-Kinds of work:
-{kinds_of_work}
-Packages:
-{packages}
-"""
+LISTING_CLOSING_INSTRUCTION = (
+    "Example title: {title}\nExample JD:\n{jd}\nReturn the specified JSON fields."
+)
 
-# The listing-specific input and closing instruction go here.
-LISTING_CLOSING_INSTRUCTION = """Example listing input: {listing_input}
-Example closing instruction for this listing.
-"""
-
-# The agreed structured-output field definitions and contract belong here.
-STRUCTURED_OUTPUT_CONTRACT = {}
+STRUCTURED_OUTPUT_CONTRACT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["profession", "quote", "verdict"],
+    "properties": {
+        "profession": {"type": "string"},
+        "quote": {"type": "string"},
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "not_english",
+                "one_package",
+                "chip_or_electronics_design",
+                "research_publication",
+                "pass",
+                "non_tech",
+            ],
+        },
+    },
+}

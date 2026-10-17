@@ -198,7 +198,8 @@ def collect_one(settings, board, market, run_trigger):
     except Exception as error:
         run_log.error("could not open the scrape_runs row: %s", error)
         alerts.append(("failed", f"could not open the scrape_runs row: {error}"))
-        _send_alert(settings, run_id, board, market, alerts, counters={})
+        if not (run_trigger == "scheduled" and settings.get("combined_nightly_email")):
+            _send_alert(settings, run_id, board, market, alerts, counters={})
         return {"status": "failed", "run_id": run_id}
 
     outcome = {
@@ -261,7 +262,7 @@ def collect_one(settings, board, market, run_trigger):
                           "The run finished but some job descriptions did not "
                           "download; counters and outstanding work below are "
                           "known and will be retried by the nightly diff."))
-    if alerts:
+    if alerts and not (run_trigger == "scheduled" and settings.get("combined_nightly_email")):
         _send_alert(settings, run_id, board, market, alerts,
                     outcome["counters"])
 

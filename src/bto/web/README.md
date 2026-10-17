@@ -1,8 +1,7 @@
 # Web
 
 This folder contains the BTO web application: page presentation, HTTP routes,
-browser interactions, authentication and sessions. The files are placeholders;
-UI and authentication are not implemented.
+browser interactions, authentication and sessions. Review reads the locked PostgreSQL sorting tables.
 
 ## Structure
 
@@ -45,13 +44,33 @@ src/bto/web/
 
 ## Authentication
 
-Private `auth_config.py` will hold `SECRET_KEY` and `USERS`, including password
+Private `auth_config.py` holds `SECRET_KEY` and `USERS`, including password
 hashes and `admin`/`viewer` roles. The example contains dummy values only and is
 not runtime configuration.
 
-Both roles use the same login, pages and visible controls. Admin can use actions;
-viewer controls communicate view-only access. Server-side permissions must
-reject viewer mutations, and browsing must leave workflow state unchanged.
+Both roles use the same login, pages and visible controls. Connected actions require admin;
+viewer controls communicate view-only access. Server-side permissions reject viewer mutations. Browsing does not mutate
+owner state. Unconnected actions are unavailable to both roles.
 
 Business logic lives in the relevant BTO modules; `web/` presents it and handles
 browser interaction.
+
+## Local run
+
+Install the `web` extra and provide ignored `.env` PostgreSQL settings and
+`auth_config.py`. Run `python -m bto.web.app --host 127.0.0.1 --port 5050`.
+The local user LaunchAgents keep this server and its PostgreSQL SSH tunnel
+available while the Mac is awake and logged in.
+
+Review supports grouped card/table browsing, search, filters, listing history,
+wording diffs, copy matches, advertiser windows and requirement evidence. It
+uses Refresh to read newly committed data without writing user state. Empty tables remain
+empty; no demo jobs are generated. HTML is sanitized before display; LinkedIn
+uses retained text.
+
+To apply uses the approved Submit / Prepare shell. Applied has its approved
+layout and empty state. Their application backends remain unconnected.
+Taxonomy keeps navigation and the basic shell while its definitions await an
+update. Stars, read state and application actions have no temporary storage.
+Query logic lives in `review_jds/review_job_listings.py`; sorting rules are
+reused from `filter_and_bucket_job_listings/`.

@@ -1,1 +1,18 @@
-{# Applied page presentation for application records and tracking. #}
+{% extends 'base.html' %}{% block title %}BTO · Applied{% endblock %}{% block body %}
+<div class="applied-page">
+<section class="applied-toolbar" aria-label="Application filters">
+<div class="toolbar-row"><label class="search-control"><span aria-hidden="true">⌕</span><input disabled aria-label="Search applications" placeholder="Search title or company"></label><span class="separator"></span><button class="chip" disabled><span class="gold">★</span> Priority only</button><span class="separator"></span>
+<span class="control-label">Posted by</span><div class="segmented compact"><button class="selected" disabled>Any</button><button disabled>Employer</button><button disabled>Recruitment firm</button></div><span class="separator"></span><span class="control-label">Applied</span><div class="segmented compact"><button class="selected" disabled>Any time</button><button disabled>Last 7 days</button><button disabled>Last 30 days</button></div></div>
+<div class="toolbar-row stage-row"><span class="control-label">Stage</span><div class="stage-filters">
+{% for label,tone in [('All',''),('Open',''),('Submitted Application','soft'),('Recruiter Reached Out','good'),('Interviewing & Technical Assessments','accent'),('Offer','offer'),('Rejected','red'),('Withdrawn','grey'),('No response','grey')] %}<button class="chip {{ 'selected' if loop.first }}" disabled>{% if tone %}<span class="dot dot-{{ tone }}"></span>{% endif %}{{ label }}</button>{% endfor %}
+</div><span class="stage-help">Application tracking is not connected · stage filters are unavailable.</span></div>
+</section>
+<div class="applied-shell"><main class="applied-table-panel"><table class="jobs-table applied-table"><colgroup><col class="applied-star-col"><col class="applied-role-col"><col class="applied-date-col"><col class="applied-stage-col"><col class="applied-latest-col"><col class="applied-cv-col"><col class="applied-link-col"></colgroup><thead><tr><th>★</th><th>Employer · role</th><th>Applied</th><th>Stage</th><th>Latest</th><th>CV sent</th><th>Link activity</th></tr></thead><tbody></tbody></table><div class="applied-empty"><p>Application data not connected.</p><p>Existing application and tracking work will be integrated later.</p></div></main>
+<aside class="application-detail" aria-label="Application inspector">
+<header class="inspector-header"><p class="eyebrow">Application</p><h2>No application selected</h2><div class="segmented inspector-tabs" aria-label="Application view"><button class="selected" disabled>Record</button><button disabled>Job listing</button></div></header>
+<section class="inspector-record"><dl><dt>Stage</dt><dd>—</dd><dt>Applied</dt><dd>—</dd><dt>Via</dt><dd>—</dd><dt>CV sent</dt><dd>—</dd><dt>Referral</dt><dd>—</dd></dl></section>
+<section class="inspector-log"><h3 class="control-label">Log</h3><input disabled aria-label="Application log entry" placeholder="Application logs are not connected"><p class="muted">Log unavailable.</p></section>
+<section class="inspector-people"><h3 class="control-label">People</h3><p class="muted">People information unavailable.</p></section>
+<footer class="inspector-actions"><button class="chip text-accent" disabled>Move back to To apply</button><button class="chip error" disabled>Delete application</button></footer>
+</aside></div>
+</div>{% endblock %}

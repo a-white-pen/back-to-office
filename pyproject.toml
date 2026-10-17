@@ -1,6 +1,6 @@
 [project]
 name = "bto"
-version = "0.1.7"
+version = "0.2.0"
 description = "Back to Office — a personal job-search system"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
@@ -60,3 +60,10 @@ ignore = [
 
 # Safe authentication template, never imported under its dotted filename.
 "**/auth_config.example.py" = ["N999"]
+
+"**/*prompt.example.py" = ["N999"]
+"**/preferences/*.example.py" = ["N999"]
+
+[tool.setuptools.package-data]
+"bto.web" = ["templates/*.html", "static/*.css", "static/*.js"]
+"bto.send_notifications" = ["templates/*.txt", "templates/*.html"]

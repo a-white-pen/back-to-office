@@ -1405,6 +1405,10 @@ def _summary(config, args, result, began):
     Fail-soft like every alert here: an undelivered summary is logged and the
     run still succeeds. Its absence is an operational signal to investigate.
     """
+    if config.get("combined_nightly_email"):
+        from bto.filter_and_bucket_job_listings.call_gemini_batch import save, timestamp
+        save(Path("data/job_sorting/cleaning-outcome.json"), {"at": timestamp(), "status": "complete", "summary": result})
+        return
     if result is None or args.target_suffix or args.stage not in ("nightly", "all"):
         return
     elapsed = None
@@ -1427,6 +1431,10 @@ def _summary(config, args, result, began):
 
 def _alert(config, args, cause, detail):
     """True only when the alert reached SMTP; False when it did not."""
+    if config.get("combined_nightly_email"):
+        from bto.filter_and_bucket_job_listings.call_gemini_batch import save, timestamp
+        save(Path("data/job_sorting/cleaning-outcome.json"), {"at": timestamp(), "status": "failed", "error": cause + ": " + detail})
+        return False
     try:
         return notify.send_problem_alert(
             config, run_id=getattr(args, "build_id", None) or "clean_job_listings",

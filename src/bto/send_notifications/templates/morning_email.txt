@@ -59,8 +59,8 @@ LACKS THIS WEEK
 
 COST
 ----
-  Triage and extraction run at Google's half price using Flex throughout.
-  On normal nights, no new read starts after 8:30 AM; calls already sent may finish.
+  Triage and extraction run at Google's half price using Gemini Batch.
+  The night finishes after both Batch stages, validation and the Review cache refresh complete.
 
                                  Half price                       Cost                     Full price                       Cost                 Total
   Triage           {{TRIAGE_HALF_LISTINGS}}       {{TRIAGE_HALF_COST}}       {{TRIAGE_FULL_LISTINGS}}       {{TRIAGE_FULL_COST}}       {{TRIAGE_COST}}

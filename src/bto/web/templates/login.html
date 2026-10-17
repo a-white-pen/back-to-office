@@ -1,1 +1,21 @@
-{# Front Door login page shared by admin and viewer. #}
+{% extends 'base.html' %}{% block title %}BTO · Sign in{% endblock %}
+{% block body %}
+<header class="navbar login-navbar"><a class="brand" href="{{ url_for('auth.login') }}">BTO</a></header>
+<main class="front-door">
+<section class="login-card">
+<div class="login-heading"><h1>Back to Office</h1><p>Sign in to continue.</p></div>
+<form method="post" action="{{ url_for('auth.login') }}" class="login-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Username<input name="username" autocomplete="username" spellcheck="false" autocapitalize="none" required autofocus></label>
+<label>Password<span class="password-field"><input id="password" aria-label="Password" name="password" type="password" autocomplete="current-password" required><button type="button" data-password-toggle>Show</button></span></label>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<button class="login-enter" type="submit">Enter <span class="key-hint">↵</span></button>
+</form>
+</section>
+<div class="front-divider"><span></span><p>or</p><span></span></div>
+<section class="jd-drop-card">
+<p class="control-label">Not Belinda?</p><h2>Have a job for Belinda? Drop the JD here</h2>
+<p>JD checking and CV generation are not connected yet.</p>
+<button class="drop-jd" type="button" disabled>Drop the JD here →</button>
+</section>
+</main>{% endblock %}

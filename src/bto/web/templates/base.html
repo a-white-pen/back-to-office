@@ -1,3 +1,29 @@
-{# Shared authenticated shell/navigation, including the top-right Taxonomy link.
-   Admin and viewer see the same pages and controls; viewer controls communicate
-   view-only access. Server-side permissions enforce the mutation boundary. #}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Back to Office{% endblock %}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Roboto:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+<link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}">
+<script defer src="{{ url_for('static',filename='app.js') }}">
+</script>
+</head>
+<body class="{{ 'signed-in' if user else 'signed-out' }} {{ 'to-apply-page' if request.endpoint=='to_apply.to_apply' }}">
+{% if user %}<header class="navbar">
+<a class="brand" href="{{ url_for('review.review') }}">BTO</a>
+<nav aria-label="Main navigation">
+{% for endpoint,label in [('review.review','Review'),('to_apply.to_apply','To apply'),('applied.applied','Applied')] %}<a class="nav-tab {{ 'active' if request.endpoint==endpoint }}" {{ 'aria-current=page' if request.endpoint==endpoint }} href="{{ url_for(endpoint) }}">{{ label }}{% if endpoint=='review.review' and total is defined %} <span class="nav-count" data-review-nav-count>{{ total if total is not none else '—' }}</span>{% endif %}</a>{% endfor %}
+</nav>
+<div class="nav-right">
+<a href="{{ url_for('taxonomy.taxonomy') }}" target="_blank" rel="noopener">Taxonomy ↗</a>
+<span>{{ user.username }} · {{ user.role }}</span>
+<form method="post" action="{{ url_for('auth.logout') }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<button class="quiet">Logout</button>
+</form>
+</div>
+</header>{% endif %}
+{% block body %}{% endblock %}
+</body>
+</html>

@@ -7,48 +7,66 @@ root-owned `0600` file `/etc/bto/env`, loaded by systemd through
 `EnvironmentFile=`. Source-controlled units live in [systemd/](systemd/) and
 are installed in `/etc/systemd/system/`.
 
-The host accepts SSH only. PostgreSQL is not exposed to the internet.
+The host accepts SSH and serves the existing web front ends behind Caddy.
+PostgreSQL is not exposed to the internet.
 
-## Deployment flow
+## Nightly workflow
+
+One service runs the complete workflow. Keep the source, wheel, private
+configuration and notification-ownership changes together when deploying.
 
 ```text
 fetch-job-listings.timer (03:30 SGT nightly)
-    └──> fetch-job-listings.service
-         │    a provider outcome of ok, partial or failed is not a
-         │    non-zero exit; a failed board is not a failed service
-         │
-         ├── safe completion (exit 0)
-         │   ├──> send-job-listings-summary-email.service
-         │   └──> clean-job-listings.service
-         │        └──> Databricks
-         │
-         └── unsafe termination (non-zero: crash, configuration, kill)
-             ├──> send-job-listings-summary-email.service
-             └──> fallback alert: cleaning skipped
+    → fetch-job-listings.service → python -m bto.nightly
+    → collection → cleaning / canonicalization → PostgreSQL reconciliation
+    → free preparation → triage Batch → validated triage ingestion
+    → free dependent logic → extraction Batch → validated extraction ingestion
+    → deterministic rules → repeat suppression → full-window validation
+    → connected Review publication → one terminal email
 ```
 
-The fetch timer has `Persistent=false`, so a firing missed while the host is
-down is skipped rather than run late. The summary service runs after every
-fetch execution and attempts email delivery. Cleaning runs only after exit 0
-from the fetch and has no timer of its own.
+The timer keeps `Persistent=false`. The workflow invokes the existing collection and cleaning commands;
+each stage retains its own bounded retry policy. Collection still isolates
+board × market outcomes. The workflow verifies the finished collection handoff. Controlled board
+outcomes retain their existing semantics: cleaning processes the observations
+that landed, and the terminal report explains any lost coverage. A terminal failure sends one failure email;
+a healthy asynchronous Batch has no morning cutoff or systemd start timeout.
+No separate stage-success or arbitrary morning status emails are sent.
 
-Exit 0 means collection completed normally and wrote its finished handoff.
-Provider outcomes remain `ok`, `partial`, or `failed`, but none blocks cleaning
-of the Bronze observations that landed. A crash, configuration failure, or kill
-exits non-zero and blocks cleaning. The fetch fallback then attempts an explicit
-skipped-cleaning alert.
+Private run state, submitted inputs, remote job IDs and downloaded results live
+under ignored `data/job_sorting/`. Resume the saved logical run after process
+or network loss. Never start a fresh directory to bypass an unfinished Batch.
+Interrupted upstream collection/cleaning requires inspection before rerunning;
+paid collection is not restarted automatically in the same collection night.
+A later scheduled night can collect the missing observations through its normal
+diff. Unfinished sorting resumes its saved logical run before another collection. PostgreSQL ownership is released
+while Google processes a Batch. The serving snapshot refresh runs only after final deterministic validation.
+`review_jds/refresh_review_cache.py` uses the existing admin login and CSRF token
+to POST the existing `/review/cache/rebuild` action. It waits for a newer,
+completed snapshot before success. The UI exposes minute precision, so the
+request crosses a minute boundary before rebuilding. Reads have bounded
+recovery; a lost rebuild receipt is checked by reads rather than another POST.
+Failure to confirm freshness within ten minutes is a terminal publication
+failure. The previous snapshot remains usable. No serving UI code is deployed.
 
-Both success targets are intentionally listed on one space-separated
-`OnSuccess=` directive. systemd activates both; neither replaces the other.
+Required private configuration adds `GEMINI_TRIAGE_JOBS_API_KEY`,
+`GEMINI_EXTRACT_JOB_DETAILS_API_KEY`, `BTO_REVIEW_REFRESH_URL`,
+`BTO_REVIEW_REFRESH_USERNAME` and `BTO_REVIEW_REFRESH_PASSWORD` to `/etc/bto/env`.
+The last two are the existing admin login. The URL is the HTTPS serving origin.
+Provision the six private preference modules and two prompt modules separately
+with owner-only read permissions; none belongs in an archive or public wheel.
+Existing PostgreSQL, Databricks, Apify and SMTP configuration remains in place.
+Normal nights retain the shared USD 10 Batch ceiling. No Flex fallback or
+morning processing cutoff is used.
 
 ## systemd units
 
 | Unit | Purpose |
 | :--- | :--- |
 | `fetch-job-listings.timer` | Starts the nightly fetch at 03:30 SGT. |
-| `fetch-job-listings.service` | Runs all configured board × market fetches. It does not restart automatically. Its fallback attempts to report unsafe termination and skipped cleaning. |
-| `send-job-listings-summary-email.service` | Attempts to send one success/failure summary for the scheduled fetch execution. It has no timer. |
-| `clean-job-listings.service` | Runs incremental standardization, reconciliation, and Databricks canonicalization after a successful fetch. It has no timer or automatic restart. |
+| `fetch-job-listings.service` | Runs the complete reviewed nightly Python workflow. No automatic restart; a shared terminal-email checkpoint prevents duplicate fallback messages. |
+| `send-job-listings-summary-email.service` | Standalone collection summary command; the full nightly workflow does not invoke it. |
+| `clean-job-listings.service` | Standalone cleaning command. The full nightly workflow invokes cleaning directly; this unit has no timer or automatic restart. |
 
 Cleaning uses the production command:
 
@@ -109,8 +127,9 @@ for that build belong to the
    sudo systemctl enable --now fetch-job-listings.timer
    ```
 
-   The cleaning and summary services are static; the fetch service activates
-   them through `OnSuccess=` and `OnFailure=`.
+   Cleaning and summary services remain available as standalone commands. The
+   nightly service invokes the commands directly; it has no `OnSuccess=` or
+   `OnFailure=` targets. Do not also enable another sorting trigger.
 
 Install local development and parity-test dependencies with
 `python -m pip install -e '.[dev]'`.
@@ -138,21 +157,34 @@ journalctl -u clean-job-listings.service
 
 journald is persistent, so logs survive host restarts.
 
-## Alerts and failures
+## Alerts, resumption and rollback
 
-The summary service attempts a fetch summary after success or failure.
-Successful production cleaning attempts its own summary and reports handled
-problems separately; a run with quarantined rows attempts both. Email delivery
-does not change whether the underlying operation succeeded or failed. If a
-handled cleaning failure's Python alert is not delivered, cleaning exits 6 so
-systemd can attempt its fallback notification. The fetch and cleaning services
-have `ExecStopPost=` fallbacks for failures Python could not report; the summary
-service does not. The fetch fallback also attempts to report that cleaning was
-skipped. If any email delivery fails, or if the interpreter, source tree, or
-environment file is unavailable, rely on systemd status and journald.
+The orchestrator sends one completion email only after sorting validation and
+the serving cache refresh. A terminal failure sends one failure email after
+that stage's bounded recovery; local/network polling loss keeps the same remote
+Batch ID. There are no routine collection/cleaning-success emails or timed
+morning status email in this workflow. Standalone manual commands retain their
+existing notifications.
 
-No service automatically restarts. Diagnose the failure before a manual rerun;
-otherwise the next successful nightly fetch starts cleaning again.
+`data/job_sorting/nightly.json` records the logical run and attempted terminal
+email. `runs/<run_id>/batch.json` holds immutable submission identities, remote
+IDs and ingestion progress. Restarting an interrupted sorter resumes that run;
+a completed same-night chain exits without collecting or emailing again.
+Upstream execution keeps its original six-hour collection and four-hour cleaning
+bounds; Batch and the overall service have no processing cutoff.
+
+Before deployment, back up source, virtual environment, wheel, units and private
+environment on the host in a root-only rollback directory. Preserve unrelated
+deployed packages/services; copy only the reviewed application files. Export the
+reviewed commit for the wheel, never the live directory containing private files.
+
+To roll back while no nightly chain is active, restore the saved source, venv,
+single wheel, environment and units, then run `systemctl daemon-reload` and
+confirm the original 03:30 timer. Keep PostgreSQL data, all new runtime ledgers,
+remote Batch IDs and downloaded results; a rollback does not cancel or erase
+paid work. Never run two orchestrators, or a legacy fetch/clean chain alongside
+an unfinished Batch run. Inspect active remote work before any rollback during
+execution. The serving UI and its application state are outside this deployment.
 
 ## PostgreSQL
 

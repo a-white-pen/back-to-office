@@ -1,5 +1,6 @@
 # Back to Office — nightly cleaning: standardize and canonicalize job listings.
-# Chained after a successful fetch; it intentionally has no timer or automatic
+# Standalone cleaning command; the nightly Python chain invokes it directly.
+# It intentionally has no timer or automatic
 # restart. Python reports handled failures, and the next successful fetch retries.
 
 [Unit]

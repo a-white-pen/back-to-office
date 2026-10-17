@@ -4,19 +4,19 @@ All values are illustrative dummy data, not Belinda's preferences or defaults.
 Copy the structure into the private file and supply the agreed values there.
 """
 
-WORK_GROUPS = ["Example work group"]
+WORK_GROUPS = {"analytics": "Example work group"}
 KINDS_OF_WORK = [
     {
         "name": "Example kind of work",
         "meaning": "An illustrative activity, not a real work preference.",
-        "years_group": "Example work group",
+        "years_group": "analytics",
         # Each answer is preferred, show me, maybe or no.
         "markets": {"SG": "preferred", "HK": "show me", "TH": "maybe"},
     },
     {
         "name": "Example data engineering",
         "meaning": "An illustrative Data Engineering entry.",
-        "years_group": "Example work group",
+        "years_group": "analytics",
         "markets": {"SG": "show me", "HK": "show me", "TH": "maybe"},
         # This specific Data Engineering override is not a general rule language.
         # The market answers above apply unless a REQUIRED line asks for a named
