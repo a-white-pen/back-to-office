@@ -1,0 +1,4 @@
+{# Offer filter changes that recover jobs from an empty queue. #}<div class="empty-review-card">
+  <h2>{{ 'This listing is unavailable.' if jobs else 'No jobs match this search.' }}</h2>
+  {% if jobs %}<p>Open a job from Table.</p>{% elif relaxations %}<p>Removing one condition would bring some back:</p><div class="review-relaxations">{% for suggestion in relaxations %}<a data-review-relax href="{{ page_url(**suggestion.changes) }}"><span>Remove <b>{{ suggestion.label }}</b></span><strong>{{ suggestion.count }} jobs</strong></a>{% endfor %}</div>{% else %}<p>Try changing a filter or clearing the search.</p>{% endif %}
+</div>

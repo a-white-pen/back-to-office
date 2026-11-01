@@ -1,27 +1,8 @@
-"""One board × market run: the collection loop, lifecycle and orchestration.
+"""Collect each board and market while preserving raw responses and run outcomes.
 
-Called by:
-    __main__ (python -m bto collect / preflight)
-
-Calls:
-    mcf/seek/indeed/linkedin fetch + parse modules (board behaviour)
-    storage.databricks (raw files, Bronze tables, scrape_runs)
-    storage.postgres (Apify cost rows — fail soft)
-    send_notifications.notify (problem alerts)
-
-This is the one copy of the collection run loop, driven by adapters:
-
-    card boards (MCF, SEEK family)      sweep search pages → diff against
-        prior Bronze state → fetch new/changed/unresolved JDs (capped at
-        5,000; the rest deferred) → observations + jd_fetches decisions
-    actor boards (Indeed, LinkedIn)     Apify actor run(s) → validated rows,
-        JD already inside → observations + cost rows
-
-Every run owns one scrape_runs row: inserted as `running` at the start and
-updated in place at the end — a hard crash legitimately leaves it `running`.
-Up to MAX_PARALLEL_RUNS runs execute at once; one run failing never stops
-the others. A run ending with a meaningful problem sends one problem alert
-carrying every cause.
+Card-based sources fetch new or changed job descriptions after the search sweep.
+Actor-based sources return descriptions with their results. Each run records
+its own progress and failures; one failed source does not stop the others.
 """
 
 import hashlib
@@ -30,13 +11,12 @@ import logging
 import re
 import secrets
 import time
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import settings as settings_module
-from ..send_notifications import notify
+from ..log_errors import log_failure
 from ..storage.databricks import read as dbx_read
 from ..storage.databricks import write as dbx_write
 from ..storage.databricks.connection import (
@@ -46,6 +26,7 @@ from ..storage.databricks.connection import (
     table_name,
     volume_path,
 )
+from ..storage.postgres import setup as pg_setup
 from ..storage.postgres import write as pg_write
 from .apify_client import ApifyClient
 from .indeed import fetch as indeed_fetch
@@ -70,11 +51,8 @@ MIN_FETCHES_BEFORE_ABORT = 20
 TERM_FAILURE_ABORT_RATIO = 0.30
 OBSERVATION_FLUSH_ROWS = 400
 
-# Bounded parallelism for raw payload uploads to raw_job_listings (the Files
-# API takes far more than this; the ceiling on this account is ~96 pooled
-# connections). Kept deliberately conservative: worst case is 4 runs at once,
-# so at most ~32 concurrent uploads across the night. Bronze TABLE writes
-# stay single-statement batched — only file uploads are parallel.
+# Limit concurrent raw-file uploads across parallel source runs.
+# Bronze table writes remain batched and sequential within each run.
 ACTOR_UPLOAD_WORKERS = 8      # actor boards: pure upload phase, nothing else
 CARD_UPLOAD_WORKERS = 4       # card boards: uploads overlap the polite fetch loop
 
@@ -82,10 +60,6 @@ CARD_UPLOAD_WORKERS = 4       # card boards: uploads overlap the polite fetch lo
 class AbnormalSourceError(RuntimeError):
     """The board's behaviour or volume is outside anything normal; the run
     stops safely, keeps the work already landed, and notifies."""
-
-
-class CircuitBreakerTripped(RuntimeError):
-    """Too many detail fetches failed in a row-rate sense."""
 
 
 def slugify(value):
@@ -98,23 +72,18 @@ def slugify(value):
 
 
 def new_run_id(board, market, now_utc=None):
-    """{board}_{market}_{YYYYMMDD_HHMMSS}_{suffix} — timestamp in SGT, four
-    random hex characters so two same-second starts can never collide."""
+    """Create a source run ID with a Singapore timestamp and random suffix."""
     now_utc = now_utc or datetime.now(timezone.utc)
     stamp = now_utc.astimezone(SGT).strftime("%Y%m%d_%H%M%S")
     return f"{board}_{market}_{stamp}_{secrets.token_hex(2)}"
 
 
 # ── the fetch-execution handoff file ────────────────────────────────────────
-# One fetch invocation = one execution group. Its identity is recorded in a
-# small local JSON file so the next stage in the service chain (today the
-# summary email; later clean → filter → summary) reports on exactly the runs
-# belonging to THAT invocation — never "everything from today". Written with
-# state "started" before any run launches, rewritten with state "finished"
-# and the exact run_ids at the end, so even a killed fetch leaves an honest
-# scope for the summary.
+# Save the intended source pairs before collection and the exact run IDs at
+# completion. Nightly processing and manual summaries use this execution scope.
 
 def write_handoff(path, payload):
+    """Replace the execution handoff atomically for downstream readers."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -123,15 +92,13 @@ def write_handoff(path, payload):
 
 
 def read_handoff(path):
+    """Read the saved scope and outcome of one collection execution."""
     return json.loads(Path(path).read_text())
 
 
 # ── orchestration ───────────────────────────────────────────────────────────
 def collect_all(settings, pairs, run_trigger):
-    """Run the given board × market pairs, at most MAX_PARALLEL_RUNS at once.
-    Returns {(board, market): {"status": ..., "run_id": ...}}. A run raising
-    never kills the rest. Writes the fetch-execution handoff file the summary
-    stage is scoped by."""
+    """Collect source pairs in parallel and save their exact run IDs in the handoff."""
     log.info("collection starting: %d runs, max %d in parallel — %s",
              len(pairs), settings_module.MAX_PARALLEL_RUNS,
              ", ".join(f"{b}_{m}" for b, m in pairs))
@@ -156,9 +123,9 @@ def collect_all(settings, pairs, run_trigger):
         for future, pair in futures.items():
             try:
                 results[pair] = future.result()
-            except Exception:
-                # collect_one handles its own failures; this is a launcher bug.
-                log.exception("launcher failure for %s_%s", *pair)
+            except Exception as error:
+                # Source failures are handled inside collect_one.
+                log_failure(log, "launcher failure for %s_%s", *pair, error=error)
                 results[pair] = {"status": "failed", "run_id": None}
 
     write_handoff(handoff_path, {
@@ -179,9 +146,7 @@ def collect_all(settings, pairs, run_trigger):
 
 
 def collect_one(settings, board, market, run_trigger):
-    """One complete board × market run, including its scrape_runs lifecycle
-    and problem alert. Always returns {"status": ..., "run_id": ...}; never
-    raises."""
+    """Collect one source and close its run record, retaining any failure outcome."""
     started_at = datetime.now(timezone.utc)
     run_id = new_run_id(board, market, started_at)
     run_log = logging.getLogger(f"bto.run.{board}_{market}")
@@ -190,15 +155,14 @@ def collect_one(settings, board, market, run_trigger):
     dbx = Databricks(settings["databricks_host"], settings["databricks_token"],
                      settings["databricks_warehouse_id"])
     catalog = settings["databricks_catalog"]
-    alerts = []          # [(cause, detail)] — one combined email at the end
+    alerts = []          # [(cause, detail)] retained in the journal and run records
 
     try:
         dbx_write.insert_running_run(dbx, catalog, run_id, board, market,
                                      started_at, run_trigger)
     except Exception as error:
-        run_log.error("could not open the scrape_runs row: %s", error)
+        log_failure(run_log, "could not open scrape_runs row run_id=%s", run_id, error=error)
         alerts.append(("failed", f"could not open the scrape_runs row: {error}"))
-        _send_alert(settings, run_id, board, market, alerts, counters={})
         return {"status": "failed", "run_id": run_id}
 
     outcome = {
@@ -224,8 +188,7 @@ def collect_one(settings, board, market, run_trigger):
         outcome["error_reason"] = f"abnormal source: {error}"
         alerts.append(("Abnormal volume", str(error)))
     except Exception as error:
-        run_log.error("run %s died: %s\n%s", run_id, error,
-                      traceback.format_exc())
+        log_failure(run_log, "run %s died", run_id, error=error)
         outcome["status"] = "failed"
         outcome["error_reason"] = f"{type(error).__name__}: {error}"
 
@@ -243,7 +206,7 @@ def collect_one(settings, board, market, run_trigger):
     except Exception as error:
         # The row stays `running` — durable evidence of a run that never
         # closed. The alert is the operator's signal to look.
-        run_log.error("could not close the scrape_runs row: %s", error)
+        log_failure(run_log, "could not close scrape_runs row run_id=%s", run_id, error=error)
         outcome["status"] = "failed"
         alerts.append(("failed",
                        f"run finished but its scrape_runs row could not be "
@@ -261,9 +224,10 @@ def collect_one(settings, board, market, run_trigger):
                           "The run finished but some job descriptions did not "
                           "download; counters and outstanding work below are "
                           "known and will be retried by the nightly diff."))
-    if alerts:
-        _send_alert(settings, run_id, board, market, alerts,
-                    outcome["counters"])
+    # Alert details can contain provider data; retain only safe context in logs.
+    for cause, _detail in alerts:
+        note = "; fetch-journal evidence may be incomplete" if cause == "Evidence preservation" else ""
+        run_log.warning("collection issue: %s: run_id=%s%s", cause, run_id, note)
 
     elapsed = (finished_at - started_at).total_seconds()
     counters = outcome["counters"]
@@ -277,12 +241,6 @@ def collect_one(settings, board, market, run_trigger):
     return {"status": status, "run_id": run_id}
 
 
-def _send_alert(settings, run_id, board, market, alerts, counters):
-    cause = ", ".join(sorted({cause for cause, _ in alerts}))
-    detail = "\n\n".join(f"[{c}]\n{d}" for c, d in alerts)
-    notify.send_problem_alert(
-        settings, run_id=run_id, board=board, market=market,
-        cause=cause, detail=detail, counters=counters)
 
 
 # ── card boards: MCF + SEEK family ──────────────────────────────────────────
@@ -329,8 +287,8 @@ def _collect_cards(dbx, settings, board, market, run_id, run_log, alerts):
             failed_terms += 1
             failed_term_names.append(term)
             term_results[term] = {"error": f"{type(error).__name__}: {error}"[:300]}
-            run_log.warning("term %r failed (%d so far): %s",
-                            term, failed_terms, error)
+            log_failure(run_log, "term %r failed run_id=%s failures=%d",
+                        term, run_id, failed_terms, error=error, level=logging.WARNING)
             if failed_terms / len(terms) > TERM_FAILURE_ABORT_RATIO:
                 raise AbnormalSourceError(
                     f"{failed_terms}/{len(terms)} search terms failed — "
@@ -415,8 +373,8 @@ def _collect_cards(dbx, settings, board, market, run_id, run_log, alerts):
                     *_row_key(board, market, upload_job_id, run_id),
                     change_signal=upload_signal, content_hash=None,
                     payload=None))
-                run_log.warning("payload upload failed for %s: %s",
-                                upload_job_id, error)
+                log_failure(run_log, "payload upload failed run_id=%s board_job_id=%s",
+                            run_id, upload_job_id, error=error, level=logging.WARNING)
             else:
                 stats["fetched"] += 1
                 jd_decisions.append(
@@ -465,8 +423,8 @@ def _collect_cards(dbx, settings, board, market, run_id, run_log, alerts):
                     pending_rows.append(parse.observation_row(
                         *_row_key(board, market, job_id, run_id),
                         change_signal=signal, content_hash=None, payload=None))
-                    run_log.warning("detail fetch failed for %s: %s",
-                                    job_id, error)
+                    log_failure(run_log, "detail fetch failed run_id=%s board_job_id=%s",
+                                run_id, job_id, error=error, level=logging.WARNING)
                     if (position >= MIN_FETCHES_BEFORE_ABORT
                             and stats["failures"] / position
                             > FETCH_FAILURE_ABORT_RATIO):
@@ -533,7 +491,7 @@ def _collect_cards(dbx, settings, board, market, run_id, run_log, alerts):
                      "%d deferred, %d failed)", len(jd_decisions),
                      stats["fetched"], len(unchanged_ids),
                      len(deferred_ids) + breaker_deferred, stats["failures"])
-    except Exception as write_error:
+    except Exception:
         # Evidence preservation: a Bronze/write failure fails the run (the
         # original exception is re-raised untouched below), but it must not
         # also take the detail-fetch journal down with it — payloads already
@@ -548,18 +506,18 @@ def _collect_cards(dbx, settings, board, market, run_id, run_log, alerts):
             # successful fetch.
             resolve_uploads(wait=True)
         except Exception as resolve_error:
-            run_log.error("could not resolve outstanding uploads during "
-                          "journal recovery: %s", resolve_error)
+            log_failure(run_log, "could not resolve uploads during journal recovery run_id=%s",
+                        run_id, error=resolve_error)
         if jd_decisions and not journal_written:
             try:
                 write_jd_journal()
                 run_log.error(
-                    "write failure (%s) — jd_fetches journal preserved with "
+                    "write failure run_id=%s; jd_fetches journal preserved with "
                     "%d completed decisions before failing the run",
-                    write_error, len(jd_decisions))
+                    run_id, len(jd_decisions))
             except Exception as journal_error:
-                run_log.error("jd_fetches journal preservation ALSO failed "
-                              "after the write failure: %s", journal_error)
+                log_failure(run_log, "jd_fetches journal preservation also failed run_id=%s",
+                            run_id, error=journal_error)
                 alerts.append((
                     "Evidence preservation",
                     f"the write failure also prevented preserving the "
@@ -576,6 +534,8 @@ def _collect_cards(dbx, settings, board, market, run_id, run_log, alerts):
     status = ("partial" if (stats["failures"] or backlog or failed_terms)
               else "ok")
     if failed_term_names:
+        run_log.warning("search coverage incomplete run_id=%s: %d of %d search terms failed",
+                        run_id, failed_terms, len(terms))
         shown = ", ".join(repr(term) for term in failed_term_names[:8])
         if len(failed_term_names) > 8:
             shown += f" and {len(failed_term_names) - 8} more"
@@ -694,15 +654,10 @@ def _land_page(dbx, catalog, adapter, run_id, term_label, page, raw):
 
 # ── Indeed ──────────────────────────────────────────────────────────────────
 def _collect_indeed(dbx, settings, market, run_id, run_log, alerts):
-    """One Actor run per configured query; rows already carry the JD. Within
-    the run the LAST ENCOUNTERED occurrence of a job id wins — encounter
-    order is configured query order, then actor dataset order.
+    """Run each configured query and retain the last encountered copy of each job.
 
-    One failed query is recorded and the QUERY loop continues — there is no
-    failure-percentage cutoff: however many queries fail, every remaining
-    configured query is still attempted. One malformed row is rejected and
-    the ROW loop continues. The sweep itself stops only for the board budget
-    or abnormal volume."""
+    Failed queries and malformed rows leave other results usable. Only the board
+    budget or abnormal volume stops the sweep; there is no query-failure cutoff."""
     adapter = indeed_fetch.adapter(market)
     catalog = settings["databricks_catalog"]
     client = ApifyClient(settings["apify_token"])
@@ -735,14 +690,19 @@ def _collect_indeed(dbx, settings, market, run_id, run_log, alerts):
     canary_empty = canary_no_in_market = None
     cost_failures = []
 
-    def query_failed(query, reason, **extra):
+    def query_failed(query, reason, *, error=None, **extra):
         """Record one failed query; the QUERY loop then continues with the
         next query, however many have failed. Only the budget guard at the
         top of the loop stops the sweep itself."""
         failed_queries.append((query.text, reason))
         term_results[query.text] = {**extra, "error": reason}
-        run_log.warning("query %r failed (%d so far): %s",
-                        query.text, len(failed_queries), reason)
+        if error is not None:
+            log_failure(run_log, "query %r failed run_id=%s failures=%d",
+                        query.text, run_id, len(failed_queries),
+                        error=error, level=logging.WARNING)
+        else:
+            run_log.warning("query %r failed run_id=%s failures=%d; details in term_results",
+                            query.text, run_id, len(failed_queries))
 
     for index, query in enumerate(queries, 1):
         if budget - spent < 0.001:
@@ -757,7 +717,7 @@ def _collect_indeed(dbx, settings, market, run_id, run_log, alerts):
                 max_charge_usd=charge_cap,
                 timeout_s=settings["apify_run_timeout_s"])
         except Exception as error:
-            query_failed(query, f"{type(error).__name__}: {error}"[:300])
+            query_failed(query, f"{type(error).__name__}: {error}"[:300], error=error)
             continue
 
         run = evidence.get("run") or {}
@@ -801,8 +761,8 @@ def _collect_indeed(dbx, settings, market, run_id, run_log, alerts):
                 malformed += 1
                 if first_malformed is None:
                     first_malformed = str(error)[:300]
-                run_log.warning("query %r: malformed row rejected: %s",
-                                query.text, str(error)[:300])
+                log_failure(run_log, "query %r: malformed row rejected run_id=%s",
+                            query.text, run_id, error=error, level=logging.WARNING)
                 continue
             valid += 1
             selected[job_id] = (row, query)      # last encountered wins
@@ -874,6 +834,10 @@ def _collect_indeed(dbx, settings, market, run_id, run_log, alerts):
                        f"remain verbatim in this run's raw_search_results "
                        f"envelopes."))
     if failed_queries:
+        run_log.warning(
+            "search coverage incomplete run_id=%s: %d of %d configured queries failed "
+            "(%d attempted, %d succeeded)",
+            run_id, len(failed_queries), len(queries), attempted, succeeded)
         shown = "; ".join(f"{text!r}: {reason}"
                           for text, reason in failed_queries[:8])
         if len(failed_queries) > 8:
@@ -932,8 +896,8 @@ def _record_indeed_cost(run_id, market, query, run, rows, cost_failures,
         run_log.info("cost recorded: apify run %s USD %s",
                      run.get("id"), run.get("usageTotalUsd"))
     except Exception as error:
-        run_log.error("cost write FAILED for apify run %s: %s",
-                      run.get("id"), error)
+        log_failure(run_log, "cost write FAILED for apify run %s run_id=%s",
+                    run.get("id"), run_id, error=error)
         cost_failures.append(f"{run.get('id')} ({query.text}): {error}")
 
 
@@ -968,7 +932,8 @@ def _land_actor_observations(dbx, catalog, board, market, run_id, selected,
             try:
                 futures_by_hash[content_hash].result()
             except Exception as error:
-                run_log.error("payload write failed for %s: %s", job_id, error)
+                log_failure(run_log, "payload write failed run_id=%s board_job_id=%s",
+                            run_id, job_id, error=error)
                 rows_to_insert.append({"board": board, "market": market,
                                        "board_job_id": job_id, "run_id": run_id,
                                        "content_hash": None})
@@ -1036,8 +1001,8 @@ def _collect_linkedin(dbx, settings, market, run_id, run_log, alerts):
         run_log.info("cost recorded: apify run %s USD %s",
                      run.get("id"), run.get("usageTotalUsd"))
     except Exception as error:
-        run_log.error("cost write FAILED for apify run %s: %s",
-                      run.get("id"), error)
+        log_failure(run_log, "cost write FAILED for apify run %s run_id=%s",
+                    run.get("id"), run_id, error=error)
         cost_failures.append(f"{run.get('id')}: {error}")
         alerts.append(("Cost not recorded",
                        f"the scrape worked but its Apify cost row could not "
@@ -1144,9 +1109,7 @@ def _collect_linkedin(dbx, settings, market, run_id, run_log, alerts):
 
 # ── deployment preflight ────────────────────────────────────────────────────
 def preflight(settings):
-    """Prove every dependency of the unattended run, without collecting:
-    Databricks auth + volumes + tables, PostgreSQL auth + cost tables, both
-    Apify actors, and SMTP login. Returns True when everything passed."""
+    """Verify collection storage, Apify actors and SMTP without collecting jobs."""
     ok = True
     catalog = settings["databricks_catalog"]
     dbx = Databricks(settings["databricks_host"], settings["databricks_token"],
@@ -1156,7 +1119,7 @@ def preflight(settings):
             dbx.volume_exists(volume_path(catalog, volume))
             log.info("volume %s reachable", volume_path(catalog, volume))
         except Exception as error:
-            log.error("volume %s FAILED: %s", volume, error)
+            log_failure(log, "volume %s FAILED", volume, error=error)
             ok = False
     for table in ("scrape_runs", "mcf_job_listings", "seek_job_listings",
                   "indeed_job_listings", "linkedin_job_listings"):
@@ -1164,14 +1127,14 @@ def preflight(settings):
             dbx.query(f"SELECT 1 FROM {table_name(catalog, table)} LIMIT 1")
             log.info("table %s reachable", table_name(catalog, table))
         except Exception as error:
-            log.error("table %s FAILED: %s", table, error)
+            log_failure(log, "table %s FAILED", table, error=error)
             ok = False
 
     try:
-        pg_write.ensure_cost_tables()
+        pg_setup.ensure_cost_tables()
         log.info("PostgreSQL reachable; cost tables ensured")
     except Exception as error:
-        log.error("PostgreSQL FAILED: %s", error)
+        log_failure(log, "PostgreSQL FAILED", error=error)
         ok = False
 
     client = ApifyClient(settings["apify_token"])
@@ -1180,7 +1143,7 @@ def preflight(settings):
         log.info("Indeed actor OK: %s build %s", summary.get("name"),
                  summary.get("buildNumber"))
     except Exception as error:
-        log.error("Indeed actor FAILED: %s", error)
+        log_failure(log, "Indeed actor FAILED", error=error)
         ok = False
     try:
         preflight_evidence = linkedin_fetch.validate_actor(client)
@@ -1189,7 +1152,7 @@ def preflight(settings):
                  preflight_evidence["actor"].get("name"),
                  account["remainingIncludedUsd"])
     except Exception as error:
-        log.error("LinkedIn actor FAILED: %s", error)
+        log_failure(log, "LinkedIn actor FAILED", error=error)
         ok = False
 
     try:
@@ -1208,7 +1171,7 @@ def preflight(settings):
         server.quit()
         log.info("SMTP login OK (%s)", settings["smtp_host"])
     except Exception as error:
-        log.error("SMTP FAILED: %s", error)
+        log_failure(log, "SMTP FAILED", error=error)
         ok = False
 
     log.info("preflight %s", "PASSED" if ok else "FAILED")

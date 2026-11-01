@@ -172,7 +172,7 @@ them as `PRIMARY KEY` or `NOT NULL` constraints unless explicitly stated.
 
 | Column Name | Datatype | Nullable | Description & Business Rules |
 | :--- | :--- | :--- | :--- |
-| `run_id` | `STRING` | NO | Opaque unique identifier. Normal forward runs use `{board}_{market}_{YYYYMMDD_HHMMSS}_{suffix}` — e.g. `linkedin_sg_20260828_091530_a7f3`, with an SGT timestamp and four random hex characters — while historical `_qNNN` and `_backfill_*` variants also exist. Chronology comes from `started_at`, never lexical `run_id` order. |
+| `run_id` | `STRING` | NO | Opaque unique identifier. Normal forward runs use `{board}_{market}_{YYYYMMDD_HHMMSS}_{suffix}` — e.g. `example_xx_20000101_000000_0000` (synthetic), with an SGT timestamp and four random hex characters — while historical `_qNNN` and `_backfill_*` variants also exist. Chronology comes from `started_at`, never lexical `run_id` order. |
 | `board` | `STRING` | NO | Board slug: `mcf` · `jobstreet` · `jobsdb` · `seek` · `indeed` · `linkedin`. The market is not part of it — see `market`. |
 | `market` | `STRING` | NO | Market being searched, e.g. `sg`, `hk`, `th`, `au`, `nz`, `uk`, `us`, `ca`. |
 | `started_at` | `TIMESTAMP` | NO | UTC. Written when the `running` row is inserted. |
@@ -226,7 +226,7 @@ them as `PRIMARY KEY` or `NOT NULL` constraints unless explicitly stated.
 | `hiringCompany.uen` | `STRING` | YES | The end employer's UEN. Rare. |
 | `metadata.updatedAt` | `STRING` | YES | MCF's last-updated stamp inside the payload. The observation-level copy used for change detection is `change_signal`. |
 | `metadata.editCount` | `INT` | YES | How many times the employer has edited the posting. |
-| `metadata.jobPostId` | `STRING` | YES | MCF's human-facing id, e.g. `MCF-2026-0878867`. |
+| `metadata.jobPostId` | `STRING` | YES | MCF's human-facing id, in `MCF-YYYY-NNNNNNN` format. |
 | `metadata.jobDetailsUrl` | `STRING` | YES | The canonical posting URL. |
 | `metadata.newPostingDate` | `DATE` | YES | The posted date MCF displays. |
 | `metadata.originalPostingDate` | `DATE` | YES | When the ad first went up. Differs from `newPostingDate` on reposts. |

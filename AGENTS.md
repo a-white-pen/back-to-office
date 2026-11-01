@@ -2,19 +2,19 @@
 
 ## Project Overview
 
-Back to Office (BTO) collects job listings, preserves what boards returned,
-cleans and deduplicates them, and is intended to support ranking, CV tailoring
-and application tracking.
+Back to Office (BTO) collects, cleans, deduplicates and buckets job listings
+for manual Review. Saved jobs can request direct-listing and contact research.
 
 The implemented packages are `fetch_job_listings`, `clean_job_listings`,
-`send_notifications`, `storage/databricks`, and `storage/postgres` (costs).
-Databricks is the analytical lakehouse; PostgreSQL currently records
-operational cost data. These namespaces are reserved and contain only
-initializers:
-`filter_and_rank`, `review_jds`, `tailor_cvs`, `research_job_listing`,
-`apply_for_jobs`, `track_applied_jobs`, `web`, `analytics`, `record_costs`,
-`storage/s3`, and `sync`. Their presence does not mean their behavior, schemas,
-or architecture have been decided.
+`filter_and_bucket_job_listings`, `review_jds`, `research_job_listing`,
+`find_job_contacts`, `send_notifications`, `web`, `storage/databricks` and
+`storage/postgres`. Databricks holds raw and cleaned listings; PostgreSQL holds
+sorting history, Review state, research results and operational costs.
+`nightly_run.py` coordinates collection, cleaning, Gemini Batch sorting, Review
+publication and the terminal email.
+
+`tailor_cvs`, `apply_for_jobs`, `track_applied_jobs`, `analytics`, `record_costs`,
+`sync` and `storage/s3` contain only initializers.
 
 ## Build and Run Commands
 
@@ -24,18 +24,25 @@ make lint               # ruff over src and tests
 make scrape BOARD=mcf   # collect one board
 ```
 
-Install with `python -m pip install -e '.[dev]'`; the Makefile calls
-`.venv/bin/python`. The cleaning entrypoint is
+Create `.venv` with `python -m venv .venv`, then install with
+`.venv/bin/python -m pip install -e '.[dev,web]'`. The Makefile uses that Python.
+The cleaning entrypoint is
 `.venv/bin/python -m bto.clean_job_listings.run` (`--help` documents its local
 interface). `deploy/README.md` and the systemd units own production arguments,
 deployment and wheel builds.
 
 ## Testing Instructions
 
-The owner's gitignored `tests/` tree uses recorded provider responses and
-synthetic rows; it makes no live calls, does not touch Databricks and does not
-spend money. Some fixtures are real provider captures. A public checkout
-without tests is expected, not broken; never publish or force-add the suite.
+`make test` and `make lint` include `private/tests/` when present. Run one
+test with `.venv/bin/python -m pytest -q tests/path/test_file.py::test_name`.
+
+Tests are offline against synthetic rows and recorded provider responses.
+They make no live provider calls, touch no Databricks data and spend no money.
+PostgreSQL integration tests require a separate local test database, never
+production; they skip when it is not configured.
+
+All tests, including synthetic tests, stay gitignored and must never be
+committed. Tests needing absent private fixtures must skip with a reason.
 
 ## Code Style & Conventions
 
@@ -59,11 +66,9 @@ There is one installable package, `src/bto/`; never manipulate `sys.path`.
   dependencies are declared in `pyproject.toml`; development/test tooling
   belongs in an extra.
 
-Each fact has one home: the root README owns system purpose; package READMEs
-own orientation; cleaning `CONTRACT.md` owns cleaning, matching and publication
-guarantees; `HTML_NORMALIZATION.md` owns description/HTML behavior; data
-dictionaries own schemas; comments and docstrings explain local why, source
-quirks and safety boundaries.
+Keep system purpose in the root README and package orientation in package
+READMEs. Comments and docstrings explain local why, source quirks and safety
+boundaries; do not duplicate authoritative documentation.
 
 ## Boundaries & Guardrails
 
@@ -71,8 +76,7 @@ quirks and safety boundaries.
   for. No new or heavy dependency without a concrete need and approval.
 - **Bronze volumes are immutable.** Fix a parsing bug by re-reading the raw
   file, never by editing one.
-- Current Silver products are rebuildable. PostgreSQL currently stores costs;
-  future review/application state is unimplemented and has no decided schema.
+- Preserve Review read, star and save state as canonical groups change.
 - **Collection isolates each board × market run.** A controlled provider/run
   failure does not stop other pairs or make a normally completed collection
   command exit nonzero. Normal completion writes the finished handoff and
@@ -102,25 +106,32 @@ Canonical persistent Databricks names belong to `storage/databricks/`; do not
 build a second registry. `DATABRICKS_CATALOG` in settings is authoritative and
 must not be hardcoded. Run-scoped scratch SQL may name temporary objects.
 
-Cleaning has exactly two persistent Silver products: `standardized_job_listings`
-and `job_canonical_mapping`. Candidate pairs, evidence, diagnostics, scratch
-outputs and current assignments stay non-persistent unless an explicit
-architecture change approves another product. Consumers must satisfy the
-freshness contract; canonical IDs are rebuildable historical evidence, not
-immutable user state. The cleaning
-[contract](src/bto/clean_job_listings/docs/CONTRACT.md) owns the exact rules.
+Cleaning persists only `standardized_job_listings` and `job_canonical_mapping`
+in Silver. Intermediate pairs, evidence, diagnostics and assignments stay
+non-persistent unless an architecture change is explicitly approved. These
+products are rebuildable; canonical IDs are historical evidence, not immutable
+user state. Follow the cleaning
+[contract](src/bto/clean_job_listings/docs/CONTRACT.md) for matching, publication
+and consumer freshness, and
+[HTML_NORMALIZATION.md](src/bto/clean_job_listings/docs/HTML_NORMALIZATION.md)
+for description/HTML behavior.
 
-## Private Search Configuration
+## Private Configuration
 
-Each board's `searches.py` is private and gitignored. Its tracked
-`searches.example.py` has only safe dummy values, preserves the runtime
-interface and is never imported. Tracked canaries stay with their adapters;
-private production sweeps must include the applicable canary, although runtime
-does not validate that relationship.
+Each board's `searches.py`, filtering preferences, production prompts and
+web authentication stay private and gitignored. Tracked `*.example.*` files
+must preserve their runtime interfaces, contain only safe dummy values and
+never load implicitly.
+
+Keep canaries with their adapters. Production searches must include the
+applicable canary; runtime does not validate that relationship.
+
+**`private/` is a separate, never-published Git repository**, optionally
+checked out inside this working copy and ignored here. It holds private policy
+files and tests. Locate it through `bto.settings.private_dir()`, handle its
+absence explicitly and never copy its contents into tracked public files.
 
 ## Vocabulary
-
-Use these words. Inventing synonyms makes the project unreadable in six months.
 
 | Term | Means |
 | :--- | :--- |
@@ -150,11 +161,10 @@ unless told to.
 
 ## Agent Working Style
 
-Be concise. Explain decisions, invariants, source quirks, safety boundaries and
-material findings, not ordinary steps. Do not invent architecture, state or
-cleanup; narrate commands; restate the task; or duplicate authoritative docs.
+Be concise. Explain decisions, invariants, source quirks, safety boundaries
+and material findings. Do not narrate routine commands or restate the task.
 Report what changed, what was tested and remaining risk, then stop.
 
 Never introduce internal phase-number terminology into committed code,
 comments or documentation. Use functional names such as collection,
-standardization, canonicalization, filtering and ranking, or notification.
+standardization, canonicalization, filtering and bucketing, or notification.

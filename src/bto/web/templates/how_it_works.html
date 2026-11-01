@@ -1,0 +1,235 @@
+{# Explain the nightly workflow, Review controls, search results and costs. #}{% extends 'base.html' %}{% block title %}BTO · How it works{% endblock %}{% block body %}<main class="how-it-works">
+<header class="how-head">
+<div><h1>How it works</h1><span class="how-updated">Last updated 26 Oct 2026</span></div>
+<p class="how-lede">What runs each night, what the buckets and labels on Review, To apply and Applied mean, the emails, and what it costs. All times are Singapore time.</p>
+</header>
+<nav class="how-nav" aria-label="Sections">{% for key,label in [('when','Each night'),('sources','Boards'),('buckets','Buckets'),('decided','Who decided'),('repeats','Repeats and copies'),('history','Listing history'),('sidebar','Review sidebar'),('stages','Application stages'),('referral','Referral'),('emails','Emails'),('glossary','Glossary'),('cost','Cost'),('keys','Keyboard')] %}<a href="#{{ key }}" data-how-section="{{ key }}">{{ label }}</a>{% endfor %}</nav>
+
+<section id="when">
+<h2>Each night</h2>
+<p>Six steps, in this order. Each starts when the one before it finishes, so a slow night pushes everything later. Collection stops if it runs past 6 hours, and Cleaning past 4 hours. Gemini Batch has no morning cutoff. The nightly email shows when each step started and finished.</p>
+<div class="how-card"><div class="how-steps">
+<time>3:30 AM</time><div><b>1 · Collection</b><p>Each board is searched in each of its markets with your search terms. For MyCareersFuture, JobStreet and JobsDB, the JD of each new or changed listing is then fetched; a JD that cannot be fetched is tried again on a later night. Indeed and LinkedIn return the JD with the search results.</p></div>
+<time></time><div><b>2 · Cleaning</b><p>Each board's dates, company, location and salary are put into one common form, and each JD becomes plain text. Titles are trimmed, not rewritten. Listings that are an exact match or near match are grouped as one job, on one board or across boards.</p></div>
+<time></time><div><b>3 · Load to database</b><p>Tonight's new and changed listings are copied into the sorting database. A listing whose wording was already read reuses the earlier answer. The title and language filters run, and the rest are queued for Triage.</p></div>
+<time></time><div><b>4 · Triage</b><p>Gemini reads the title and the first 16,000 characters of the JD of each listing that passed the filters and has no earlier answer. It decides whether the work is one of your kinds of work, other tech work, non-tech work, or not in English, and it must quote the listing to back its answer.</p></div>
+<time></time><div><b>5 · Extraction</b><p>Gemini reads each listing that passed Triage and lists its kinds of work and its requirements, each with an exact quote from the title or JD. It also says whether the advertiser is a recruitment firm and whether the employer is public sector. In both Gemini steps, an answer that fails BTO's checks is sent back once; after a second failure the listing goes to Not sorted.</p></div>
+<time></time><div><b>6 · Rules &amp; Review</b><p>Your rules compare each job's requirements with your settings and set its bucket. Repeats from the last 30 nights are suppressed. Review is rebuilt and goes live, and the nightly email is sent. Changes on the site pause until the new Review is live; if the rebuild fails, the previous Review stays.</p></div>
+</div></div>
+<p class="how-note">If a step stops, the later steps do not run and a failure email goes out. Finished steps stay saved. A failed board, or a listing that fails twice, does not stop the night. After a stop in Load to database, Triage, Extraction or Rules &amp; Review, starting the nightly run again does a backfill: it picks up the saved run and reuses the answers already paid for. If nobody starts it, the next 3:30 AM start tries the backfill instead of a new collection. A stop in Collection or Cleaning is not rerun automatically; the next night starts a new run. See <a href="#emails">Emails</a>.</p>
+</section>
+
+<section id="sources">
+<h2>Where the jobs come from</h2>
+<p>Five boards, three markets. Each board is collected only for the markets listed against it.</p>
+<div class="how-card how-table-card"><table class="how-table">
+<thead><tr><th>Board</th><th>Markets</th></tr></thead>
+<tbody>
+<tr><td>MyCareersFuture</td><td>Singapore</td></tr>
+<tr><td>JobStreet</td><td>Singapore</td></tr>
+<tr><td>JobsDB</td><td>Hong Kong, Thailand</td></tr>
+<tr><td>LinkedIn</td><td>Singapore, Hong Kong, Thailand</td></tr>
+<tr><td>Indeed</td><td>Singapore, Hong Kong, Thailand</td></tr>
+</tbody></table></div>
+<p class="how-note">Australia and New Zealand are not collected. Their runs are kept but switched off.</p>
+</section>
+
+<section id="buckets">
+<h2>Buckets</h2>
+<p>Checked in this order. A job stops at the first rule it matches, with one exception: a JD not in English goes to Ineligible as soon as the language filter or Triage finds it. The tag says who decided, so the rules and Gemini can be checked separately; Review prints the same word beside the bucket.</p>
+<div class="how-card">
+<div class="how-row"><h3><i class="how-dot"></i>1 · Out of scope</h3><p>Not the kind of work you're looking for. Off by default in Review, where the bucket reads "Out of scope" and its type. Three types:</p>
+<div class="how-kinds">
+<div><b>Title filter <span class="how-tag rules">rules</span></b><p>A phrase from your list is in the job title, and none of your protect words is. Only the title is checked, before Gemini reads anything.</p></div>
+<div><b>Non-tech <span class="how-tag triage">triage</span></b><p>Passed the title and language filters, but Triage judged the work non-technical.</p><p class="how-example">e.g. Procurement Specialist · Quillstack: "non-tech: procurement specialist"</p></div>
+<div><b>Tech, not for me <span class="how-tag triage">triage</span><span class="how-tag rules">rules</span></b><p>Tech work you don't want. Either Triage puts it outside your professions, or a rule rules it out: every kind of work in it is a no for that market; it is an internship; it is for students or new graduates only; or, in a market set this way, the contract is shorter than your minimum or the employer is public sector.</p><p class="how-example">e.g. Data Analyst Intern · Granite Cloud: "internship"</p></div>
+</div></div>
+<div class="how-row"><h3><i class="how-dot ineligible"></i>2 · Ineligible <span class="how-tag triage">triage</span><span class="how-tag rules">rules</span></h3><p>The job asks for something you can't meet: a language you don't have, work rights you don't have in that market, something on your cannot list, two or more required items you lack, a degree you don't hold, or more years than your limit. Off by default in Review. Most reasons quote the JD sentence; click it to go there.</p>
+<div class="how-kinds"><div><b>Language filter <span class="how-tag rules">rules</span></b><p>Runs with the title filter, before Gemini reads anything. A JD with 40% or more non-Latin letters, or almost no common English words, goes to Ineligible. Triage can also find that a JD is not in English.</p><p class="how-example">e.g. "JD not in English: 62% Thai letters"</p></div></div></div>
+<div class="how-row"><h3><i class="how-dot less_interested"></i>3 · Less interested <span class="how-tag rules">rules</span></h3><p>Work you could do, but one of your settings makes it less appealing. The reason names which: the top salary is at or under your floor for that market; a kind of work you marked less interested is in the job, or is its main kind; your best answer for its kinds of work in that market is maybe; in a market set this way, the contract is shorter than your minimum; or the years asked are past your stretch but within your limit. Review shows it by default only when the same employer also has a Top picks or In lane job; the rest are under the Less interested chip.</p><p class="how-example">e.g. Junior Android Developer · Pebble Pay</p></div>
+<div class="how-row"><h3><i class="how-dot top_picks"></i>4 · Top picks <span class="how-tag rules">rules</span></h3><p>Checked just before In lane. The main kind of work is one you marked preferred for that market, the years asked are within your comfortable number, and nothing required is missing. Top picks have no reason line.</p><p class="how-example">e.g. Product Analyst, Care Platform · Example employer</p></div>
+<div class="how-row"><h3><i class="how-dot in_lane"></i>5 · In lane <span class="how-tag rules">rules</span></h3><p>Everything left: your best answer for its kinds of work in that market is show me or preferred, and no rule above matched. The reason says what keeps it out of Top picks: the main kind is not one you marked preferred, the years asked are a little over your comfortable number, or one required item is missing.</p><p class="how-example">e.g. Senior Data Analyst, Growth · Example employer</p></div>
+</div>
+<div class="how-box"><span class="how-label">To review</span><p>= Top picks + In lane + the Less interested jobs in your queue, counting jobs first seen in that night's collection. Not sorted jobs and repeats are not counted. This is the number in the nightly email subject.</p></div>
+<h3>Outside the order</h3>
+<div class="how-card">
+<div class="how-row"><h3>Not sorted</h3><p>Passed the title and language filters, but Triage or Extraction gave no valid answer after two tries, or the night stopped before the job was read. No decider is shown and there is no requirements panel; the reason says what happened. Not sorted is in Review's default view, and jobs that failed twice are listed in the nightly email under Needs attention. A job that a stopped night left unread is read on a later run.</p><p class="how-example">e.g. Data Analyst, Lifecycle · Meridian Telco: "extraction failed twice"</p></div>
+<div class="how-row"><h3>Suppressed</h3><p>A repeat, held back after the rules set its bucket. It keeps its bucket but is left out of the Review queue and the counts, and it carries a Suppressed label. Nothing is deleted. See <a href="#thirty">Repeats are held back for 30 days</a>.</p></div>
+<div class="how-row"><h3>not read</h3><p>Listings from before sorting began on the configured start date, whose wording was never sent to Gemini. They show as Not sorted with the reason "not read: before processing window", have no requirements panel, and are left out of the Review queue and its search. They still appear in the Review sidebar, for example in an employer's Others list.</p><p class="how-example">e.g. Business Analyst · Cedar Council</p></div>
+</div>
+<p class="how-note">Review opens on the latest collection's unread Top picks, In lane and Not sorted jobs, plus the Less interested jobs in your queue.</p>
+</section>
+
+<section id="decided">
+<h2>Who decided</h2>
+<p>One of these sets each job's bucket. Review prints its word in small text beside the bucket on This role and in the table's Bucket column. The reason line on This role comes from whichever one decided.</p>
+<div class="how-card">
+<div class="how-row"><h3><span class="how-tag rules">rules</span></h3><p>Fixed rules that use your settings, including the title and language filters, which run before Gemini reads anything. For a job that passes Triage, Extraction supplies the requirements and the rules set the bucket. The reason names the rule or setting.</p><p class="how-example">e.g. Graduate Data Analyst · Fernhill Insurance: "students or new graduates only"</p></div>
+<div class="how-row"><h3><span class="how-tag triage">triage</span></h3><p>Triage read the title and JD and found the work out of scope: non-tech, tech outside your professions, or a JD not in English. The reason names the profession Gemini gave, and This role quotes the sentence it relied on.</p><p class="how-example">e.g. Warehouse Supervisor · Example employer: "non-tech: warehouse operations"</p></div>
+<div class="how-row"><h3>No decider</h3><p>Triage or Extraction gave no valid answer after two tries, or the job has not been read. The job is Not sorted.</p><p class="how-example">e.g. "triage failed twice" · "extraction failed twice"</p></div>
+</div>
+<h3>What the job asks for</h3>
+<p>Under the bucket on This role, each requirement from the JD sits in one group. The groups come in this order, each with a count. Hover a row to highlight its sentence in the JD; click it, or press Enter while hovering, to jump there. A job that stopped before Extraction shows "not assessed" instead.</p>
+<div class="how-card">
+<div class="how-row"><h3>Against</h3><p>An ask you don't meet, or a fact that counts against the job. The note says how, such as "not on your list" or "a little over, your comfortable is N". Contract terms and working conditions, except travel, sit here too, and so do "Recruitment firm posting", "Closed on board" and "Wording changed since you read it".</p><p class="how-example">e.g. 5+ years of experience · a little over, your comfortable is N</p></div>
+<div class="how-row"><h3>For</h3><p>An ask you meet: "you have" for a tool, "you meet it" for a language or work rights, "met" for years. A preferred ask you meet is marked preferred.</p><p class="how-example">e.g. SQL · you have</p></div>
+<div class="how-row"><h3>Other asks</h3><p>Preferred asks you don't meet, and asks your profile doesn't settle, such as travel or "or similar" choices. Read them and decide.</p><p class="how-example">e.g. regional travel</p></div>
+</div>
+<p class="how-note">A row marked "not clear if required" is an ask the JD doesn't state as required or preferred. A row with several quotes shows "N mentions" and opens to each one.</p>
+<h3>Flags</h3>
+<div class="how-card">
+<div class="how-row"><h3>recruitment firm</h3><p>Shown beside the advertiser's name in Review and To apply, and as "Recruitment firm posting" under Against. Set when MyCareersFuture marks the posting as an agency's, the advertiser is on your recruitment-firm list, a Singapore JD carries an employment-agency licence number, or the advertiser's name has a word such as recruit or staffing; otherwise Extraction judges it. Review's queue puts these jobs after those posted by employers themselves.</p></div>
+<div class="how-row"><h3>public sector</h3><p>Review shows no label. Your lists decide first; otherwise Extraction judges whether the employer is part of government, such as a ministry or statutory board. In a market set to leave out public-sector work, the job goes to Tech, not for me. In Singapore, Review's queue puts public-sector jobs after other employers and before recruitment firms.</p></div>
+<div class="how-row"><h3>NEW</h3><p>On To apply only: a saved job whose first seen night is yesterday's date gets a NEW badge. Review has no NEW label; there, the First seen by us date ends in "· last night".</p></div>
+</div>
+</section>
+
+<section id="repeats">
+<h2>Repeats and copies</h2>
+<p>Two rules keep the same job from reaching you twice. Review counts jobs, not listings.</p>
+<h3 id="fold">Copies are shown once</h3>
+<p>Listings that cleaning matches as one job are one row in Review, on one board or several. Read, star and I'll apply belong to the job, so doing one on any of its listings covers them all. The row shows one listing that is not held back: the best bucket, then the newest wording. The other listings are in the left panel, under Same job elsewhere and Times seen.</p>
+<p class="how-example">e.g. Example employer's Senior Data Analyst, Growth on JobStreet and on MyCareersFuture is one row. Mark it read on either and both are read.</p>
+<h3>How cleaning matches a job</h3>
+<p>Listings with identical wording always match. Otherwise cleaning compares two listings five words at a time, title and description together. They match when at least 70% of their five-word runs are shared; 50% when the titles are compatible; or 35% when the advertiser and title are the same, in the same market. Matches chain: if A matches B and B matches C, all three are one job. Cleaning checks likely pairs only, so it can miss a match.</p>
+<p class="how-example">Compatible titles share at least two words, or one title's words all appear in the other; Senior, Junior, Sr and Jr are ignored. "Data Analyst, Payments" and "Payments Data Analyst" are compatible.</p>
+<h3 id="thirty">Repeats are held back for 30 days</h3>
+<p>A listing is held back when another listing of the same job was first seen in the 30 nights before it, and all three of these hold:</p>
+<div class="how-card">
+<div class="how-row"><b>Same job.</b><p>Cleaning matched the two listings as one job.</p></div>
+<div class="how-row"><b>Same title.</b><p>The titles are identical, ignoring capital letters and extra spaces. Similar titles do not count.</p></div>
+<div class="how-row"><b>Same result.</b><p>The same bucket, the same reason and the same list of things you lack.</p></div>
+</div>
+<p><b>Rewritten</b> means one of the three fails, so the listing is not held back. A changed ask counts only when it changes the result. If cleaning still matches it, it is still the same job, so a job you already read stays read.</p>
+<p><b>After 30 days</b> an earlier listing no longer holds a new one back, so the job can come back with the new listing's first seen date. Read, star and I'll apply stay with the job.</p>
+<p><b>Nothing is deleted.</b> A held-back listing keeps its bucket and can still be opened. It has a Suppressed badge on This role and on its rows in the left panel. The nightly email gives the night's count, for example "12 repeats suppressed".</p>
+<div class="how-box"><span class="how-label">Example</span><p>Example employer's Senior Data Analyst, Growth was first seen on JobStreet on 12 Oct, In lane. On 20 Oct a MyCareersFuture listing of the same job had the same title and the same result, so it was held back and marked Suppressed. The job keeps its 12 Oct first seen. Had the new listing asked for more years and changed the result, it would not have been held back.</p></div>
+<p class="how-note">Only listings first seen since sorting began on the configured start date can hold back or be held back. Two listings first seen on the same night never hold each other back; they are simply one job.</p>
+</section>
+
+<section id="history">
+<h2>Listing history</h2>
+<p>At the top of Review's left panel. A job is every listing cleaning matched together: copies on other boards and markets, and reposts, closed ones included. The ⓘ tooltips use the same words.</p>
+<div class="how-card">
+<div class="how-row"><h3>First seen</h3><p>The first night BTO saw this board listing, whatever wording it had then. A wording change does not reset it. Other boards and reposts keep their own first seen, under Times seen.</p><p class="how-example">e.g. 12 Oct · 9 days ago</p></div>
+<div class="how-row"><h3>Times seen</h3><p>How many separate listings of this job we've collected (other boards, reposts). An edit to one listing doesn't make a new one. It opens the list: board, market, first and last seen or live/closed, a diff when the wording differs from this one, and open ↗.</p><p class="how-example">e.g. A listing that closed, then a new listing of the same job: 2 listings.</p></div>
+<div class="how-row"><h3>Wording changes</h3><p>How many new wordings this listing has had since we first saw it, and the night the current one appeared. "view" shows what changed. "None" means unchanged.</p><p class="how-example">e.g. 1 · 18 Oct · view</p></div>
+<div class="how-row"><h3>Suppressed</h3><p>A listing held back as a repeat has a Suppressed badge on its row under Times seen.</p></div>
+</div>
+</section>
+
+<section id="sidebar">
+<h2>Review sidebar</h2>
+<p>Review's left panel, top to bottom. No queue here: use Table view (V).</p>
+<div class="how-card">
+<div class="how-row"><h3>Listing history</h3><p>First seen, Times seen and Wording changes (see above). Last seen and Closed on board are on the listing card.</p></div>
+<div class="how-row"><h3>Same job elsewhere</h3><p>Two tabs with counts, opening on Same job. <b>Same job</b>: listings cleaning matched as this job, on other boards or in other markets. Each row shows the board, market, exact or near match, board posted date, salary there, a diff when the wording differs, and open ↗. <b>Possibly</b>: listings on other boards from the same advertiser with the same title, first seen in the last 30 days, that cleaning did not match.</p><p class="how-example">Nothing in either tab: "Only on [board]. We found no copies on other boards." One tab empty: "No confirmed copies." / "No possible matches."</p></div>
+<div class="how-row"><h3>Other jobs from [advertiser]</h3><p>Tabs In scope (Top picks, In lane, Less interested) and Others (Ineligible, Not sorted, Out of scope). Windows on first seen: 3d, 7d, 14d, 28d and All, each with its count. Opens on In scope · 3d. One row per job, listing every board it is on; "in queue" on the right means the job is in To Apply. "All in table ↗" opens Review's table filtered to this advertiser.</p></div>
+<div class="how-row"><h3>Your history</h3><p>This company only, any role: its jobs in To Apply, shown as "In queue · Not applied yet". On the live site it also lists your applications to the company, with their stage and when you applied. With nothing queued or applied, the block is hidden.</p></div>
+</div>
+</section>
+
+<section id="stages">
+<h2>Application stages</h2>
+<p>On the live site only. Applied tracks each application through seven stages, listed in this order. You can set any stage at any time from the Stage menu on its record. Rejected, Withdrawn and No response close an application; the Open filter leaves them out.</p>
+<div class="how-card">
+<div class="how-row"><b>01 · Submitted Application</b></div>
+<div class="how-row"><b>02 · Recruiter Reached Out</b></div>
+<div class="how-row"><b>03 · Interviewing &amp; Technical Assessments</b></div>
+<div class="how-row"><b>04 · Offer</b></div>
+<div class="how-row"><b>05 · Rejected</b><p>They said no.</p></div>
+<div class="how-row"><b>06 · Withdrawn</b><p>You pulled out.</p></div>
+<div class="how-row"><b>07 · No response</b><p>Shown automatically, marked (auto), when 14 days have passed since you applied and the stage is still Submitted Application. Once you set a stage by hand, No response never comes automatically. No other stage changes by itself.</p></div>
+</div>
+<p class="how-note">Mark submitted, which will move a job from To Apply into Applied, is not built yet. An application can be moved back to To Apply from its record.</p>
+</section>
+
+<section id="referral">
+<h2>Referral</h2>
+<p>On the live site only. One field per application: the name of who referred you, or nothing.</p>
+<div class="how-card">
+<div class="how-row"><h3>In the database</h3><p>One text field on the application, referral: the name, or empty when there is none. There is no separate yes/no field.</p></div>
+<div class="how-row"><h3>In the app</h3><p>In To Apply, Referral sits in the information strip at the top. "+ Add" asks "Who referred you?". Save stores the name, Edit changes it and Remove clears it; only an admin can change it. It needs the job's application, which building its CV creates; until then it reads Unavailable. Applied shows the name and cannot change it. Each change is logged.</p><p class="how-example">e.g. "Referral · A named contact" or "Referral removed"</p></div>
+</div>
+</section>
+
+<section id="emails">
+<h2>Emails</h2>
+<p>Nightly emails start with [BTO Nightly Runs]. Each nightly run sends one email when it ends, and a backfill sends one more when it ends. A listing that fails twice, or a board that fails, does not make a night incomplete; only a step that stops does.</p>
+<div class="how-card">
+<div class="how-row"><h3>All done</h3><p>All six steps finished and Review is live, with nothing to look at. The subject counts the night's new Top picks and jobs to review.</p><p class="how-subject">[BTO Nightly Runs] ✓ Sat 17 Oct · 19 Top picks · 152 to review</p></div>
+<div class="how-row"><h3>Done, needs attention</h3><p>All six steps finished and Review is live, but something needs a look: listings that failed twice, a board that failed or came back partial, or a missing cost. The email lists them, and the subject ends with a short note.</p><p class="how-subject">[BTO Nightly Runs] ! Sun 18 Oct · 23 Top picks · 169 to review · 6 listings failed</p></div>
+<div class="how-row"><h3>Backfill finished</h3><p>A backfill finished a run that had sent a failure email. Same layout as a normal night, under the original date. It says where the first run stopped.</p><p class="how-subject">[BTO Nightly Runs] ✓ Example night · backfill · 21 Top picks · 158 to review</p></div>
+<div class="how-row"><h3>Incomplete</h3><p>A step stopped, so the later steps did not run. Finished steps are saved, and tonight's jobs are not in Review. The email says what failed and whether a backfill can pick up the saved run. The subject ends with the reason.</p><p class="how-subject">[BTO Nightly Runs] ▲ Example night · INCOMPLETE · stopped at Extraction · Gemini Batch failed</p></div>
+<div class="how-row"><h3>Process stopped</h3><p>The nightly process crashed or was killed before it could send its own email. A separate fallback sends this one and names the step that was running.</p><p class="how-subject">[BTO Nightly Runs] ✕ Mon 12 Oct · FAILED · at Triage · process exited</p></div>
+<div class="how-row"><h3>Recruiter-call email</h3><p>Not part of the nightly run. Sent after BeeBot takes a recruiter's call: the caller, the employer and role, the reason for the call and a summary. The transcript is attached, and the recording when there is one.</p><p class="how-subject">[BTO Recruiter Calls] Recruiter Call — Example employer — Senior Data Analyst, Growth</p></div>
+</div>
+</section>
+
+{% set GLOSSARY=[
+  ("I'll apply","Saves a job to To apply, marks it read and opens the next job. Saving starts its direct link search. Z undoes it while the message shows.","e.g. I'll apply on a listing at an example employer"),
+  ("★ star","Marks a job as priority. Starred jobs go first in To apply. ⇧W saves a job with a star, and a job that is saved and starred starts its people search.","e.g. ★ A priority listing at an example employer"),
+  ("Mark unread","Puts a job you have read back among Review's Unread jobs.","e.g. A previously read listing, back for a second look"),
+  ("Run all","On To apply: starts every direct link search, and every ★ people search, that has not run or that failed. Searches that ran and found nothing are not repeated, and it does not write CVs.",""),
+  ("direct link","This vacancy's page on the employer's own job board, so you can apply there instead of through the board.","e.g. careers.example.com/jobs/…"),
+  ("people","People found at the employer, in four groups: Named on the listing, Recruiters, Hiring manager and team, and Also at the employer. A group comes from the person's title only; it does not say who hires.","e.g. A named contact, Head of Department · Hiring manager and team"),
+  ("comfortable / stretch / limit years","Your years of experience for each group of work. Asked for more than comfortable, a job cannot be a Top pick; more than stretch, it is Less interested; more than limit, it is Ineligible.","e.g. 5+ years of experience · a little over, your comfortable is N"),
+  ("To review","Top picks + In lane + the Less interested jobs in your queue, for the night's new jobs. The number in the nightly email subject.","e.g. 169 to review"),
+  ("Suppressed","A listing held back as a repeat of the same job from the 30 nights before. It keeps its bucket and shows a Suppressed badge.","e.g. 12 repeats suppressed, in the nightly email"),
+  ("not read","A listing from before the configured processing window. It was never sent to Gemini and stays Not sorted.","e.g. not read: before processing window"),
+  ("backfill","Finishing a stopped nightly run from its saved checkpoint. Finished steps and answers already paid for are reused.","e.g. [BTO Nightly Runs] ✓ completed run · resumed"),
+  ("Gemini input cached","The share of Gemini input tokens billed at the cached rate. It is not a discount on the whole bill.",""),
+] %}
+<section id="glossary">
+<h2>Glossary</h2>
+<div class="how-card">{% for term,meaning,example in GLOSSARY %}
+<div class="how-row"><h3>{{ term }}</h3><p>{{ meaning }}</p>{% if example %}<p class="how-example">{{ example }}</p>{% endif %}</div>{% endfor %}
+</div>
+</section>
+
+<section id="cost">
+<h2>What it costs</h2>
+<p>In US dollars. The nightly email also shows S$ using the configured conversion rate.</p>
+<div class="how-card how-table-card"><table class="how-table">
+<thead><tr><th>Each night</th><th>How it is counted</th></tr></thead>
+<tbody>
+<tr><td>Collection · Apify</td><td>The cost Apify reports for each Indeed and LinkedIn run. MyCareersFuture, JobStreet and JobsDB have no provider charge.</td></tr>
+<tr><td>Cleaning, Load to database, Rules &amp; Review</td><td>Not tracked. These steps make no paid requests; Databricks compute is not recorded.</td></tr>
+<tr><td>Triage · Gemini Batch</td><td>From the tokens Gemini reports for each answer, at Batch prices.</td></tr>
+<tr><td>Extraction · Gemini Batch</td><td>The same way as Triage.</td></tr>
+<tr><td>Night total</td><td>The three added up. If one is missing, the email shows the total as —.</td></tr>
+</tbody></table></div>
+<div class="how-card how-table-card"><table class="how-table">
+<thead><tr><th>When you press Run all</th><th class="usd">USD</th></tr></thead>
+<tbody>
+<tr><td>People search · each</td><td class="usd">estimate shown in To apply</td></tr>
+<tr><td>Direct link search · each</td><td class="usd">depends on paid requests</td></tr>
+</tbody></table></div>
+<p class="how-note">Run all starts every direct link search, and every ★ people search, that has not run or that failed. It does not write CVs. Searches use free website checks and bounded paid requests; cached searches cost nothing. To apply estimates people-search costs from completed searches, using the configured estimate when history is insufficient. Per-search spending, account-usage and daily request limits come from private configuration.</p>
+<p class="how-note"><b>Gemini Batch</b> costs are calculated using the applicable provider prices. <b>Gemini input cached</b> is the share of input tokens billed at the cached rate; it is not a discount on the whole bill. Triage and Extraction share the privately configured nightly spending limit, and no further requests are sent once it would be exceeded.</p>
+</section>
+
+<section id="keys">
+<h2>Keyboard</h2>
+<p>Keys work when the cursor is not in a text box, and not with Ctrl, ⌘ or Alt held. Most are printed on the button they press. Keys that change a job need an admin account.</p>
+<div class="how-card"><div class="how-keys">
+<kbd>1 · 2 · 3</kbd><p>Review · To Apply · Applied, from any page.</p>
+<kbd>W · Enter</kbd><p>Review: I'll apply. Saves the job to To Apply, marks it read and opens the next job. With ⇧ it also stars it. On a job already in To Apply, it takes it out.</p>
+<kbd>S</kbd><p>Review: star or unstar.</p>
+<kbd>U</kbd><p>Review: mark read or unread.</p>
+<kbd>A</kbd><p>Review: previous job. In Unread it steps back through the jobs you just read.</p>
+<kbd>D</kbd><p>Review: next job. The job you leave is marked read.</p>
+<kbd>← · →</kbd><p>Review table: previous or next page.</p>
+<kbd>Enter</kbd><p>Review: on a hovered requirement row, jump to its quote in the JD.</p>
+<kbd>/</kbd><p>Review: jump to the search box.</p>
+<kbd>V</kbd><p>Review: switch between Page and Table view.</p>
+<kbd>Z</kbd><p>Review: undo the last I'll apply, or taking a job out of To Apply, while its message shows (about 6 seconds).</p>
+<kbd>Esc</kbd><p>Review: close an open menu, or leave the search box.</p>
+<kbd>A · ←</kbd><p>To Apply: previous saved job.</p>
+<kbd>D · →</kbd><p>To Apply: next saved job.</p>
+<kbd>O</kbd><p>To Apply: open the Apply link in a new tab: the vacancy page, else the company job board, else the board listing.</p>
+<kbd>L</kbd><p>To Apply: open the job listing on its board, in a new tab.</p>
+</div></div>
+<p class="how-note">There is no M key yet: Mark submitted is not built. W, Enter and S do what clicking the button does, so saving asks for the job's direct link search, and a saved job with a star asks for its people search.</p>
+</section>
+</main>{% endblock %}

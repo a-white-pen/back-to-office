@@ -1,30 +1,9 @@
-"""Validate LinkedIn Actor rows and map them into Bronze linkedin_job_listings.
+"""Validate LinkedIn Actor rows and map them into Bronze observations.
 
-Called by:
-    fetch_job_listings.run
-
-A LinkedIn actor row already contains the full JD, so the row itself is the
-payload: `content_hash` is SHA-256 over the row's canonical serialization
-(the same recipe as Indeed), and the same canonical bytes are what
-raw_job_listings stores.
-
-The actor writes an empty string, not a null, for an absent scalar on the
-job block; Bronze keeps those values verbatim.
-
-Market validation reads the job page's own country subdomain
-(`th.linkedin.com`, `ca.linkedin.com`, …) from `jobUrl` as the primary
-signal, falling back to the location-text tokens when the URL carries no
-usable country signal. The actor gives no structured country field, and its
-location text mints countryless labels ("Greater Phuket Area") that token
-lists cannot keep up with; the subdomain matched the true job country on
-every row sampled (10,365/10,365 across SG/HK/TH, 29–31 Aug 2026),
-including both live incidents that motivated this rule.
-
-Main functions:
-    validate_row(row, config)   raises ValueError on shape drift,
-                                MarketMismatchError on an out-of-market row
-    canonical_bytes(row)        the exact bytes content_hash is taken over
-    observation_row(...)        {column: value} for the Bronze table
+Each row carries its full JD and is preserved as the raw payload. Canonical
+serialization supplies both the stored bytes and content hash. Country checks
+use the job URL's country subdomain, then location text when the URL has no
+country signal. Empty source strings remain empty strings in Bronze.
 """
 
 import json

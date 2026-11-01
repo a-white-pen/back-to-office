@@ -1,0 +1,42 @@
+{# Render the selected job description, facts and wording changes. #}{% macro fact(label,value,definition='',sub='') %}
+<div><h3>{{ label }}{% if definition %} <span class="info-tip" tabindex="0" data-tooltip="{{ definition }}" aria-label="{{ label }} definition">i</span>{% endif %}</h3><p>{{ value }}</p>{% if sub %}<small class="muted">{{ sub }}</small>{% endif %}</div>
+{% endmacro %}
+{% set f=selected.board_facts or {} %}{% set rs=selected.review_state|default({}) %}
+{% set board=board_labels.get(selected.board,selected.board) %}
+<div class="listing-head"><span class="eyebrow">{{ board }}<span>{{ selected.market|upper }}</span></span>
+  <button class="read-chip" title="{{ ('Mark unread' if rs.get('reviewed_at') else 'Mark read')+' · U' if review_state_available else 'Review state is unavailable' }}" data-review-state-action="read" data-job-id="{{ selected.id }}" data-active="{{ 'false' if rs.get('reviewed_at') else 'true' }}" {{ 'disabled' if user.role!='admin' or not review_state_available }}><span class="read-chip-dot {{ 'is-read' if rs.get('reviewed_at') }}"></span>{{ ('Read' if rs.get('reviewed_at') else 'Unread') if review_state_available else 'State unavailable' }} <span class="key-hint">U</span></button>
+  <a href="{{ selected.job_url }}" target="_blank" rel="noopener noreferrer">View on {{ board }} ↗</a>
+</div>
+<h1 id="listing-title">{{ selected.title or 'Title not supplied' }}</h1>
+<div class="listing-identity">
+  <span class="control-label">Advertiser</span><span class="advertiser-name"><b>{{ selected.advertiser_name or 'Not supplied' }}</b>{% if selected.is_recruitment_firm %}<span class="recruitment-badge">recruitment firm</span>{% endif %}
+    {% set website=f.get('company_website')|website_link %}{% if website and website.href %}<a href="{{ website.href }}" title="{{ f.company_website }}" target="_blank" rel="noopener noreferrer">{{ website.label }} ↗</a>{% endif %}
+    {% set employees=f.get('company_employee_count') %}{% if employees %}<span class="identity-note">{{ '{:,}'.format(employees) if employees is number else employees }} employees</span>{% endif %}
+    {% if review_navigation and review_navigation.advertiser %}<span class="advertiser-card-position">{{ review_navigation.advertiser.position }} of {{ review_navigation.advertiser.total }} in this queue</span>{% endif %}
+  </span>
+  {% if selected.hiring_company_name and selected.hiring_company_name!=selected.advertiser_name %}<span class="control-label">Hiring for</span><span>{{ selected.hiring_company_name }}{% if selected.board=='mcf' %} <span class="identity-note">· named on MCF</span>{% endif %}</span>{% endif %}
+  {% if f.get('job_location') %}<span class="control-label">Location</span><span>{{ f.job_location }}{% if selected.job_country_code %} · {{ {'SG':'Singapore','HK':'Hong Kong','TH':'Thailand','AU':'Australia','NZ':'New Zealand'}.get(selected.job_country_code|upper,selected.job_country_code|upper) }}{% endif %}</span>{% endif %}
+  {% if f.get('poster_name') %}<span class="control-label">Posted by</span><span>{% set profile=f.get('poster_profile_url')|website_link %}{% if profile and profile.href %}<a class="poster-link" href="{{ profile.href }}" target="_blank" rel="noopener noreferrer">{{ f.poster_name }} ↗</a>{% else %}{{ f.poster_name }}{% endif %}</span>{% endif %}
+</div>
+{% if selected.closed_on_board is sameas true %}<p class="listing-closed">Closed on board <span>· Closed on {{ board }} · last seen by us {{ selected.listing_last_seen_at|collection_night }}</span></p>{% endif %}
+{% if history and history|length>1 %}{% set previous=history|rejectattr('id','equalto',selected.id)|list|last %}<div class="listing-wording" data-reveal-root><p>Wording changed on <b>{{ selected.wording_first_seen_at|collection_night }}</b> · <button type="button" class="text-accent" data-reveal aria-expanded="false" data-closed="see diff" data-open="hide diff">see diff</button></p><div class="listing-diff" data-reveal-panel data-diff-first="{{ previous.id }}" data-diff-second="{{ selected.id }}" hidden><div data-diff-body></div></div></div>{% endif %}
+<section class="listing-fact-section"><h2>Dates</h2><div class="fact-cells">
+  {{ fact('First seen by us',(selected.listing_first_seen_at|collection_night)+(' · last night' if latest_night and selected.listing_first_seen_at|night_date==latest_night else ''),'The night our collection first found this listing on its board. This is our date, not the board’s posted date, which is shown separately on the listing.') }}
+  {% if f.get('posted_date') %}{{ fact('Board posted',f.posted_date|board_date,'The posted date the board shows. MyCareersFuture resets it when a job is reposted, so it can be later than our first seen.') }}{% endif %}
+  {{ fact('Last seen by us',selected.listing_last_seen_at|collection_night,'The most recent night our collection found this listing on its board. If this is last night, the listing was still up as of the latest run.') }}
+</div></section>
+{% set has_salary=selected.salary_raw or selected.salary_min is not none or selected.salary_max is not none %}
+{% if has_salary or selected.employment_types or f.get('position_levels') or f.get('min_years_experience') is not none or f.get('flexible_work_arrangements') or f.get('job_function') or f.get('apply_type') %}
+<section class="listing-fact-section"><h2>Pay &amp; terms</h2><div class="fact-cells">
+  {% if has_salary %}<div><h3>Salary</h3>{% if selected.salary_raw %}<p>“{{ selected.salary_raw }}”</p><small class="muted">board's wording{% if selected.salary_min is not none or selected.salary_max is not none %} · parses to {{ dict(selected,salary_raw=none)|salary_label }}{% else %} · doesn't parse to a range{% endif %}</small>{% else %}<p>{{ selected|salary_label }}</p><small class="muted">as structured on {{ board }}</small>{% endif %}</div>{% endif %}
+  {% if selected.employment_types %}{{ fact('Employment type',selected.employment_types|join(' · ')) }}{% endif %}
+  {% if f.get('position_levels') %}{{ fact('Position level',f.position_levels|join(' · ')) }}{% endif %}
+  {% if f.get('min_years_experience') is not none %}{{ fact('Minimum experience',f.min_years_experience|string+' years','MyCareersFuture’s own structured field, set by the employer. Other boards state experience only in the description.') }}{% endif %}
+  {% if f.get('flexible_work_arrangements') %}{{ fact('Flexible work',f.flexible_work_arrangements|join(' · ')) }}{% endif %}
+  {% if f.get('job_function') %}{{ fact('Job function',f.job_function) }}{% endif %}
+  {% if f.get('apply_type') %}{{ fact('Apply type','Easy Apply' if f.apply_type=='EASY_APPLY' else 'External' if f.apply_type=='EXTERNAL' else f.apply_type) }}{% endif %}
+</div></section>{% endif %}
+{% for key,label in [('categories','Categories'),('skills','Skills'),('board_attributes','Tags')] %}{% if f.get(key) %}<section class="listing-fact-section pill-section"><h2>{{ label }}</h2><div class="fact-pills">{% for value in f[key] %}<span>{{ value }}</span>{% endfor %}</div></section>{% endif %}{% endfor %}
+<section class="jd-section"><h2>Job description{% if selected.board=='linkedin' %} <small class="muted">plain text from LinkedIn</small>{% endif %}</h2><div id="listing-jd" class="{{ 'jd-html' if selected.display_html else 'jd-text' }}">{{ selected.display_html|safe if selected.display_html else selected.description_text or 'No job description supplied.' }}</div></section>
+{% if f.get('screening_questions') %}<section class="jd-section screening-questions"><h2>Screening questions</h2><p class="screening-from">From the application form on {{ board }}</p><ol>{% for question in f.screening_questions %}<li>{{ question }}</li>{% endfor %}</ol></section>{% endif %}
+{% if f.get('contacts') %}<section class="listing-contacts"><h2 class="control-label">Contacts{% if selected.board in ['jobstreet','jobsdb','seek'] %} {{ board }} found in the JD{% else %} in the JD{% endif %}</h2><div>{% for contact in f.contacts %}<span>{% if contact is mapping %}{{ contact.get('value') or 'Not supplied' }}{% else %}{{ contact }}{% endif %}</span>{% endfor %}</div></section>{% endif %}

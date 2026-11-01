@@ -1,0 +1,13 @@
+{# Render the first-seen date menu and calendar. #}<details class="filter-popover seen-more" data-popover="seen-more" data-seen-calendar='{{ filters.calendar|tojson }}' data-night-counts='{{ (night_counts or {})|tojson }}'>
+  <summary class="{{ 'selected' if filters.more_active }}" aria-label="More first-seen choices"><span>{{ filters.more_label }}</span><span class="seen-chevron">▾</span></summary>
+  <div class="popover-content seen-menu">
+    {% for value,label in [('7d','Past week'),('14d','Past 2 weeks'),('28d','Past 4 weeks'),('any','Any time')] %}
+    <a data-seen-pick class="seen-range {{ 'chosen' if filters.window==value }}" aria-label="{{ label }}" {{ 'aria-current=true' if filters.window==value }} href="{{ page_url(seen=value,page=1,id=None) }}"><span>{{ label }}</span><span>{{ '✓' if filters.window==value }}</span></a>
+    {% endfor %}
+    <div class="seen-divider"></div>
+    <div class="seen-calendar">
+      <div class="seen-calendar-heading"><span class="control-label">Pick a date</span><button type="button" data-seen-month="-1" aria-label="Previous month" title="Previous month">‹</button><strong data-seen-month-title aria-live="polite"></strong><button type="button" data-seen-month="1" aria-label="Next month" title="Next month">›</button></div>
+      <div class="seen-calendar-grid" data-seen-days></div>
+    </div>
+  </div>
+</details>

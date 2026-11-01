@@ -1,0 +1,12 @@
+{
+  "service": "example-review.service",
+  "python": "/srv/example-review/.venv/bin/python",
+  "working_directory": "/srv/example-review",
+  "state_directory": "/var/lib/example-review",
+  "user": "example-web",
+  "group": "example-web",
+  "health_url": "http://127.0.0.1:8080/login",
+  "additional_job_tables": [],
+  "active_thread_names": [],
+  "active_thread_prefixes": []
+}

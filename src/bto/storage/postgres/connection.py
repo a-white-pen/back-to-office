@@ -1,21 +1,31 @@
-"""PostgreSQL connection mechanics for the operational store.
+"""Open PostgreSQL connections and prevent competing sorting operations.
 
-Called by:
-    storage.postgres.write, __main__ (preflight)
-
-psycopg reads the standard libpq PG* environment variables (PGHOST, PGPORT,
-PGDATABASE, PGUSER, PGPASSWORD), which is exactly how both environments are
-configured: .env locally (through an SSH tunnel) and /etc/bto/env on the box.
-Nothing here re-states credentials.
-
-Main function:
-    connect() -> psycopg connection (autocommit)
+Connections use the configured libpq PG* environment variables. The sorting
+ownership lock is released when the operation exits or its connection closes.
 """
+
+from contextlib import contextmanager
 
 import psycopg
 
+OWNER_LOCK = 72403104
+
+
+class SortingBusy(RuntimeError):
+    """The sorting advisory lock is owned by another runner."""
+
 
 def connect(timeout_s=10):
-    """One autocommit connection. Callers keep it short-lived: collection writes
-    a handful of cost rows per night, not a stream."""
+    """Open an autocommit connection using the configured PostgreSQL credentials."""
     return psycopg.connect(autocommit=True, connect_timeout=timeout_s)
+
+
+@contextmanager
+def sorting_owner(conn):
+    if not conn.execute("SELECT pg_try_advisory_lock(%s)", (OWNER_LOCK,)).fetchone()[0]:
+        raise SortingBusy("Another job-sorting owner is active")
+    try:
+        yield conn
+    finally:
+        if not conn.closed:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (OWNER_LOCK,))

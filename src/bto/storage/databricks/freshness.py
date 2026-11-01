@@ -1,11 +1,8 @@
-"""Prove that the canonical mapping represents the standardized table.
+"""Check that the canonical mapping still represents the standardized listings.
 
-Publication binds `job_canonical_mapping` to the exact Delta version N of
-`standardized_job_listings` through the `bto.standardized_version` table
-property. The mapping remains fresh only while every later standardized commit
-is provably non-data-changing and the pair still satisfies its membership
-invariants. Timestamps do not prove freshness. Missing or unprovable evidence
-fails closed so callers can stop before trusting a stale mapping.
+The mapping names its exact source version. Later commits must provably leave
+rows unchanged, and both tables must satisfy the membership checks. Missing
+evidence stops the caller; timestamps alone never prove freshness.
 """
 
 import logging
@@ -36,9 +33,7 @@ _MERGE_MUTATION_METRICS = ("numTargetRowsInserted", "numTargetRowsUpdated",
 
 
 def pinned(table, version):
-    """The table frozen at Delta version N — the ONLY form in which a
-    canonicalization ever reads its source, wherever a table name is valid:
-    `FROM <table> VERSION AS OF N [alias]`."""
+    """Read a table at one fixed Delta version."""
     return f"{table} VERSION AS OF {int(version)}"
 
 
@@ -47,14 +42,9 @@ class StaleMapping(RuntimeError):
 
 
 def is_data_changing(operation, inserted=None, updated=None, deleted=None):
-    """The locked classifier for one standardized commit above N.
+    """Treat unknown operations and unproven MERGE metrics as data changes.
 
-    A MERGE is proven non-data-changing only when all three target mutation
-    metrics are present, parseable and exactly zero. An absent, NULL,
-    malformed or negative metric (a negative value is not a row count) proves
-    nothing, so the commit counts as data-changing — the same fail-closed
-    reading the rest of this module applies.
-    """
+    A MERGE leaves rows unchanged only when all three mutation counts are zero."""
     if operation in NON_DATA_CHANGING_OPERATIONS:
         return False
     if operation == "MERGE":
@@ -74,16 +64,9 @@ def is_data_changing(operation, inserted=None, updated=None, deleted=None):
 
 
 def is_insert_only(operation, inserted=None, updated=None, deleted=None):
-    """True when the commit provably left every existing row untouched.
+    """Allow only maintenance or a proven insert-only MERGE as a rebuild baseline.
 
-    Incremental canonicalization may start from a mapping bound to an earlier
-    standardized version P only when each commit above P either changed
-    nothing (`is_data_changing` is False) or was a MERGE that only INSERTED
-    rows: updated and deleted target metrics present, parseable and exactly
-    zero, inserted any nonnegative count. This never relaxes the consumer
-    freshness rule — an insert-only MERGE still makes the mapping stale; it
-    is only a valid *starting point* for rebuilding it.
-    """
+    Inserted rows still make an existing mapping stale for consumers."""
     if not is_data_changing(operation, inserted, updated, deleted):
         return True
     if operation != "MERGE":
@@ -119,9 +102,7 @@ def current_version(dbx, table):
 
 
 def commits_above(dbx, table, version):
-    """Every retained history entry strictly above `version`, oldest first:
-    (version, operation, inserted, updated, deleted) with the MERGE mutation
-    metrics as ints or None when absent."""
+    """Read later commits in order, with mutation counts or None when unproven."""
     rows = dbx.query(f"""
         SELECT version, operation,
                operationMetrics['{_MERGE_MUTATION_METRICS[0]}'],
@@ -134,8 +115,7 @@ def commits_above(dbx, table, version):
 
 
 def _metric(value):
-    """A mutation metric as an int; None when absent or unparseable (which
-    `is_data_changing` then treats as unproven, hence data-changing)."""
+    """Parse a mutation count; leave absent or malformed values unproven."""
     try:
         return int(str(value).strip())
     except (TypeError, ValueError):
@@ -147,10 +127,25 @@ def data_changing_commits_above(dbx, table, version):
             if is_data_changing(c[1], *c[2:])]
 
 
+def latest_data_version(dbx, table, scan=50):
+    """Find the newest row-changing version within the bounded history scan.
+
+    Skip recognised maintenance; stop if the scan cannot establish a data version."""
+    rows = dbx.query(f"""
+        SELECT version, operation,
+               operationMetrics['{_MERGE_MUTATION_METRICS[0]}'],
+               operationMetrics['{_MERGE_MUTATION_METRICS[1]}'],
+               operationMetrics['{_MERGE_MUTATION_METRICS[2]}']
+        FROM (DESCRIBE HISTORY {table})
+        ORDER BY version DESC LIMIT {int(scan)}""")
+    for version, operation, *metrics in rows:
+        if is_data_changing(operation, *(_metric(m) for m in metrics)):
+            return int(version)
+    raise StaleMapping(f"{table}: no data-changing commit in its latest {int(scan)} versions")
+
+
 def bound_standardized_version(dbx, mapping):
-    """The N the mapping was published against, or None when the property is
-    missing or not an integer (SHOW TBLPROPERTIES answers a missing key with
-    a message, never an empty result)."""
+    """Read the mapping's source version, or None if it is missing or malformed."""
     rows = dbx.query(f"SHOW TBLPROPERTIES {mapping} "
                      f"('{STANDARDIZED_VERSION_PROPERTY}')")
     value = rows[0][1] if rows else None
@@ -161,9 +156,7 @@ def bound_standardized_version(dbx, mapping):
 
 
 def mapping_invariants(dbx, standardized, mapping):
-    """The standardized ↔ mapping contract that any consumer of the pair
-    relies on, as pure SQL over the two tables. Returns violation strings;
-    empty means the pair is consistent."""
+    """Return SQL-detected membership violations, or an empty list for a valid pair."""
     checks = {
         "mapping rows with NULL identity or id": f"""
             SELECT count(*) FROM {mapping} WHERE board IS NULL OR market IS NULL

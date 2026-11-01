@@ -1,0 +1,23 @@
+{# Render the bucket reason and supporting requirement groups. #}{% if selected %}
+{% set out_of_scope=selected.bucket in ['title_filter','non_tech','tech_not_for_me'] %}{% set assessed=assessment and not out_of_scope %}
+<section class="assessment-card role-summary">
+  <div class="role-summary-head"><h2>This role</h2><span class="bucket {{ selected.bucket or 'not_sorted' }}">{{ ('Out of scope · ' if out_of_scope else '')+bucket_labels.get(selected.bucket,'Not sorted') }}</span><span class="muted small">{{ selected.decided_by or '' }}</span></div>
+  {% if selected.repeat_of_id %}<span class="suppressed-badge">Suppressed</span>{% endif %}
+  {% if selected.reason %}<p>{{ selected.reason }}</p>{% endif %}
+  {% set quote=selected.triage.quote if selected.triage and selected.triage.verdict!='pass' else assessment|reason_quote(selected.reason) %}{% if quote %}<button class="role-quote" data-quote="{{ quote }}">“{{ quote }}” <span class="text-accent">Go to</span></button>{% endif %}
+  {% if assessment and assessment.kind_answers and selected.bucket!='title_filter' %}<div class="kind-answers">{% for kind,answer in assessment.kind_answers %}<p class="kind-answer{{ ' main' if loop.first }}">{{ kind }} · {{ 'non-tech' if selected.bucket=='non_tech' else answer+' in '+(selected.job_country_code or selected.market)|upper }}</p>{% endfor %}</div>{% endif %}
+  {% if not assessed %}<p class="assessment-empty">{{ 'not assessed · no triage result for this listing' if selected.bucket=='not_sorted' else 'not assessed · stopped at an earlier gate' }}</p>{% endif %}
+</section>
+{% if assessed %}{% set rs=selected.review_state|default({}) %}{% set context=(context_against or [])+(['Wording changed since you read it'] if rs.get('reviewed_at') and history|default([])|length>1 and rs.reviewed_at<selected.wording_first_seen_at else []) %}<section class="assessment-card requirements-card">
+  {% for key,label in [('against','Against'),('for','For'),('other','Other asks')] %}{% set groups=assessment[key]|requirement_groups|requirement_rows(key,assessment) %}{% set facts=context if key=='against' else [] %}{% if groups or facts %}
+  <div class="requirement-group {{ key }}"><h2>{{ label }} · {{ groups|length+facts|length }}</h2>
+    {% for group in groups %}{% if group.lines|length==1 %}{% set line=group.lines[0] %}<button class="quote-line" data-quote="{{ line.quote }}"><span>{{ group.detail }}{% if group.note %}<span class="requirement-note"> · {{ group.note }}</span>{% endif %}</span><span class="quote-link">Go to ↵</span></button>
+    {% else %}<details class="requirement-evidence">
+      <summary class="quote-line"><span>{{ group.detail }}{% if group.note %}<span class="requirement-note"> · {{ group.note }}</span>{% endif %}</span><span class="evidence-count">{{ group.lines|length }} mentions</span></summary>
+      <div class="requirement-quotes">{% for line in group.lines %}<button class="quote-line evidence-quote" data-quote="{{ line.quote }}"><span><span class="muted evidence-label">{% if line.type=='years' %}Experience · {% endif %}{{ 'not clear if required' if line.status=='unknown' else line.status }}{% if line.note and line.note not in (line.status,'not clear if required') %} · {{ line.note }}{% endif %}</span>“{{ line.quote }}”</span><span class="quote-link">Go to ↵</span></button>{% endfor %}</div>
+    </details>{% endif %}{% endfor %}
+    {% for fact in facts %}<p class="quote-line context-fact">{{ fact }}</p>{% endfor %}
+  </div>{% endif %}{% endfor %}
+  {% if not assessment.against and not assessment['for'] and not assessment.other and not context %}<p class="muted small">No requirements stated</p>{% endif %}
+</section>{% endif %}
+{% endif %}

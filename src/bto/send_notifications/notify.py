@@ -1,14 +1,11 @@
-"""Format and send collection and cleaning summaries and failure alerts.
+"""Render and send nightly emails and manual collection summaries.
 
-Sending is fail-soft: missing SMTP configuration or a send failure is logged
-and returns ``False`` without undoing the work being reported. ``True`` means
-the message was handed to the SMTP server, not that a recipient read it.
-Callers decide which conditions warrant an alert; this module does not query
-application state. It also provides the systemd fallback for failures that
-ended without a delivered Python alert.
+Sending returns False on failure and leaves completed work intact. The nightly
+workflow and its systemd fallback share a checkpoint to prevent duplicate mail.
 """
 
 import argparse
+import json
 import logging
 import os
 import smtplib
@@ -17,23 +14,18 @@ import sys
 from datetime import timedelta
 from email.message import EmailMessage
 
+from bto.log_errors import log_failure
+
 log = logging.getLogger(__name__)
 
-ALERT_SUBJECT = "[back-to-office] Fetch Job Listings Error"
-CLEAN_ALERT_SUBJECT = "[back-to-office] Clean Job Listings Error"
 SUMMARY_SUBJECT = "[back-to-office] Fetch Job Listings Summary"
 CLEAN_SUMMARY_SUBJECT = "[back-to-office] Clean Job Listings Summary"
-SUMMARY_UNAVAILABLE_SUBJECT = "[back-to-office] Fetch Job Listings Summary Unavailable"
 
 
 def send_email(settings, subject, body, html=None):
-    """Send one email — plain text, with an optional HTML alternative.
-    Returns True when the message was handed to the SMTP server, False
-    otherwise. Never raises; failures are logged.
+    """Send plain text and optional HTML; return whether SMTP accepted the message.
 
-    Port 465 is implicit TLS; anything else is STARTTLS. The From address is
-    SMTP_USERNAME.
-    """
+    Use implicit TLS on port 465 and STARTTLS on other ports."""
     host = settings.get("smtp_host")
     username = settings.get("smtp_username")
     password = settings.get("smtp_password")
@@ -42,16 +34,16 @@ def send_email(settings, subject, body, html=None):
         log.warning("email not configured — NOT sent: %s", subject)
         return False
 
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = username
-    message["To"] = to
-    message.set_content(body)
-    if html:
-        message.add_alternative(html, subtype="html")
-
-    port = settings.get("smtp_port") or 587
     try:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = username
+        message["To"] = to
+        message.set_content(body)
+        if html:
+            message.add_alternative(html, subtype="html")
+
+        port = settings.get("smtp_port") or 587
         if port == 465:
             with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(),
                                   timeout=30) as server:
@@ -65,49 +57,17 @@ def send_email(settings, subject, body, html=None):
         log.info("email sent: %s", subject)
         return True
     except Exception as error:
-        log.error("email FAILED (%s): %s — not delivered", subject, error)
+        log_failure(log, "email FAILED (%s) — not delivered", subject, error=error)
         return False
-
-
-def send_problem_alert(settings, *, run_id, board, market, cause, detail,
-                       counters=None, subject=ALERT_SUBJECT):
-    """One problem alert for one run: board, market, cause, counters, what
-    landed and what remains. Returns send_email()'s outcome. `subject`
-    defaults to the collection alert; cleaning passes its own."""
-    lines = [
-        f"Run:     {run_id}",
-        f"Board:   {board}",
-        f"Market:  {market}",
-        f"Cause:   {cause}",
-        "",
-        detail.rstrip(),
-    ]
-    counters = counters or {}
-    if counters:
-        lines += ["", "Counters:"]
-        for key in ("terms_swept", "terms_succeeded", "unique_seen", "new_jobs",
-                    "changed_jobs", "jds_intended", "jds_fetched",
-                    "fetch_failures", "backlog_remaining"):
-            if counters.get(key) is not None:
-                lines.append(f"  {key:<18} {counters[key]}")
-    return send_email(settings, subject, "\n".join(lines) + "\n")
 
 
 def send_clean_summary(settings, *, run_id, stage, inserted, canonicalized,
                        version, elapsed=None, standardization_elapsed=None,
                        canonicalization_elapsed=None, canonicalization_mode=None,
                        fallback_reason=None):
-    """The heartbeat for ONE cleaning run that completed successfully.
+    """Send a manual cleaning summary using only the completed run's known facts.
 
-    Its arrival is the operator's evidence that cleaning ran to the end; its
-    absence is the signal to look. It reports only what the completed run
-    already knows, so it never queries anything — including whether
-    canonicalization extended the previous mapping or rebuilt the whole
-    history, and why an extension was refused.
-
-    Returns send_email()'s outcome; problem alerts stay separate, so a run
-    with quarantined rows sends both.
-    """
+    The combined nightly workflow reports these facts in its terminal email."""
     whole = stage == "all"
     lines = [
         f"Run:     {run_id}",
@@ -142,16 +102,6 @@ def send_clean_summary(settings, *, run_id, stage, inserted, canonicalized,
             f"  {label:<26} {timedelta(seconds=int(value.total_seconds()))}"
             for label, value in durations]
     return send_email(settings, CLEAN_SUMMARY_SUBJECT, "\n".join(lines) + "\n")
-
-
-def send_summary_unavailable(settings, night_label, error):
-    """Sent in place of the fetch summary when Databricks does not return the
-    run results it is built from — so an outage produces a message rather than
-    silence. Any run that failed has already had its own alert attempt."""
-    body = (f"The summary for the {night_label} could not be built.\n\n"
-            f"Databricks did not return the run results:\n  {error}\n\n"
-            "Any run that failed has already had its own alert attempt.\n")
-    return send_email(settings, SUMMARY_UNAVAILABLE_SUBJECT, body)
 
 
 def build_summary_body(rows, missing_pairs, night_label):
@@ -225,7 +175,7 @@ def build_summary_body(rows, missing_pairs, night_label):
                          + (f" — {reason}" if reason else ""))
     else:
         lines += ["", "Every run in this execution completed cleanly."]
-    lines += ["", "Full detail: journalctl -u fetch-job-listings · "
+    lines += ["", "Full detail: journalctl -u nightly-run · "
                   "bronze.scrape_runs"]
     plain = "\n".join(lines) + "\n"
 
@@ -279,7 +229,7 @@ def build_summary_body(rows, missing_pairs, night_label):
   <p style="margin:10px 0 0;color:#555;">Totals: {escape(totals)}</p>
   {problem_html}
   <p style="margin:16px 0 0;font-size:12px;color:#888;">
-    Full detail: <code>journalctl -u fetch-job-listings</code> ·
+    Full detail: <code>journalctl -u nightly-run</code> ·
     <code>bronze.scrape_runs</code></p>
 </div>
 """
@@ -291,67 +241,222 @@ def send_summary(settings, rows, missing_pairs, night_label):
     return send_email(settings, SUMMARY_SUBJECT, plain, html=html)
 
 
-# Exit statuses clean_job_listings.run returns only after it has DELIVERED
-# its own alert (BuildError 2, StaleMapping 3, any other handled exception
-# 5). Those same failures exit 6 instead when the send did not reach SMTP,
-# and 6 is deliberately absent here so the fallback retries them. Status 1 is
-# deliberately NOT here: it is what Python exits with when it never reached
-# main() — an import error, a missing dependency, or a syntax error. Every other
-# unsuccessful outcome needs the fallback: exit 6 means Python's alert did not
-# reach SMTP, while a signal, timeout, OOM kill, exit 1, or exit 4 may prevent
-# an alert attempt. Best-effort, like every alert here: the fallback is this
-# module under the same venv interpreter, so an exec failure, missing venv, or
-# missing source tree is reported by systemd and the journal only.
-PYTHON_ALERTED_EXIT_STATUSES = ("2", "3", "5")
+def collection_problem(row):
+    """Adapter-specific coverage loss; payload loss alone remains a routine note."""
+    if row.get("status") in {"failed", "running", "missing"}:
+        return True
+    if row.get("status") != "partial":
+        return False
+    swept = row.get("terms_swept")
+    succeeded = row.get("terms_succeeded")
+    if swept is not None and succeeded is not None and succeeded < swept:
+        return True
+    return bool(
+        row.get("board") in {"mcf", "jobstreet", "jobsdb", "seek", "indeed", "linkedin"}
+        and row.get("full_sweep") is False
+    )
 
 
-def service_failure_alert(environ, unit, send=None):
-    """The systemd fallback: called from ExecStopPost= with $SERVICE_RESULT,
-    $EXIT_CODE and $EXIT_STATUS in `environ`. Attempts one alert when `unit`
-    ended without a delivered Python alert; nothing on success or on a cleaning
-    exit status that confirms delivery. It reads SMTP settings directly from
-    the service environment so unrelated application configuration cannot
-    prevent the fallback from starting. Never raises; returns ``True`` only
-    when the message was handed to SMTP."""
-    try:
-        result = environ.get("SERVICE_RESULT", "")
-        code, status = environ.get("EXIT_CODE", ""), environ.get("EXIT_STATUS", "")
-        cleaning = unit.startswith("clean")
-        if result == "success":
-            return False
-        # 2/3/5 belong to the cleaning exit contract. Collection never sends a
-        # Python alert for them — its 2 is an argparse usage failure — so this
-        # suppression is scoped to cleaning.
-        if cleaning and code == "exited" and status in PYTHON_ALERTED_EXIT_STATUSES:
-            return False                    # Python attempted its own alert
-        settings = {
-            "smtp_host": environ.get("SMTP_HOST") or "",
-            "smtp_port": int(environ.get("SMTP_PORT") or 587),
-            "smtp_username": environ.get("SMTP_USERNAME") or "",
-            "smtp_password": environ.get("SMTP_PASSWORD") or "",
-            "notify_email_to": environ.get("NOTIFY_EMAIL_TO") or "",
+def read_collection(dbx, config):
+    import json
+    from pathlib import Path
+
+    from bto.storage.databricks.connection import table_name
+
+    handoff = json.loads(Path(config["run_handoff_path"]).read_text())
+    names = [
+        "run_id",
+        "board",
+        "market",
+        "started_at",
+        "finished_at",
+        "status",
+        "terms_swept",
+        "terms_succeeded",
+        "unique_seen",
+        "new_jobs",
+        "changed_jobs",
+        "jds_intended",
+        "jds_fetched",
+        "fetch_failures",
+        "error_reason",
+        "full_sweep",
+    ]
+    projection = ",".join("'" + n + "'," + n for n in names)
+    predicate = (
+        "array_contains(from_json(:run_ids,'array<string>'),run_id)"
+        if handoff.get("state") == "finished"
+        else "run_trigger=:trigger AND started_at>=CAST(:started AS TIMESTAMP) AND array_contains(from_json(:pairs,'array<string>'),concat(board,'_',market))"
+    )
+    params = (
+        {"run_ids": json.dumps(handoff.get("run_ids", []))}
+        if handoff.get("state") == "finished"
+        else {
+            "trigger": handoff.get("trigger", "scheduled"),
+            "started": handoff["started_at"],
+            "pairs": json.dumps(handoff.get("pairs", [])),
         }
-        # Fetch failures block cleaning, so report the skipped stage explicitly.
-        cleaning_note = (
-            "\nCleaning was SKIPPED because collection did not finish "
-            "normally.\n"
-            if unit == "fetch-job-listings" else "")
-        detail = (f"systemd result:  {result or 'unknown'}\n"
-                  f"exit code:       {code or 'unknown'}\n"
-                  f"exit status:     {status or 'unknown'}\n\n"
-                  "No Python alert was delivered. Delivery may have failed, "
-                  "or the process may have been killed, timed out, run out "
-                  "of memory, or failed during imports or configuration.\n"
-                  f"{cleaning_note}"
-                  f"Full detail: journalctl -u {unit}")
-        subject = CLEAN_ALERT_SUBJECT if cleaning else ALERT_SUBJECT
-        return bool((send or send_problem_alert)(
-            settings, run_id="systemd", board="all", market="all",
-            cause=f"{unit} ended without a delivered Python alert "
-                  f"({result or 'unknown'})",
-            detail=detail, subject=subject))
+    )
+    rows = [
+        json.loads(r[0])
+        for r in dbx.query(
+            f"SELECT to_json(named_struct({projection})) FROM {table_name(config['databricks_catalog'], 'scrape_runs')} WHERE {predicate}",
+            parameters=params,
+        )
+    ]
+    observed = {r["board"] + "_" + r["market"] for r in rows}
+    rows.extend(
+        {
+            "board": pair.split("_", 1)[0],
+            "market": pair.split("_", 1)[1],
+            "status": "missing",
+            "error_reason": "Intended run has no collection record",
+        }
+        for pair in handoff.get("pairs", [])
+        if pair not in observed
+    )
+    # Terms planned are the actual private configured sweep, never JDs/results inferred as terms.
+    for row in rows:
+        try:
+            from bto.fetch_job_listings import run as collection
+
+            if row["board"] == "indeed":
+                row["terms_planned"] = len(collection.indeed_fetch.adapter(row["market"]).queries)
+            elif row["board"] == "linkedin":
+                row["terms_planned"] = len(collection.linkedin_fetch.adapter(row["market"]).terms)
+            else:
+                row["terms_planned"] = len(
+                    collection._card_adapter(row["board"], row["market"])[0].terms
+                )
+        except (ImportError, AttributeError, ValueError):
+            row["terms_planned"] = None
+    return handoff, rows
+
+
+def bucket_validation_report(conn, *, first_id=None):
+    from bto.filter_and_bucket_job_listings import BUCKETS, HISTORY_REASON, PROCESSING_START
+    from bto.storage.postgres.read import read_rows
+
+    predicate = "j.wording_first_seen_at >= %s"
+    params = [PROCESSING_START]
+    if first_id is not None:
+        predicate += " AND j.id>%s"
+        params.append(first_id)
+    counts = read_rows(
+        conn,
+        "SELECT upper(market) market,coalesce(bucket,'not_sorted') bucket,(repeat_of_id IS NOT NULL) suppressed,count(*) n FROM job_sorting.job_listings j WHERE "
+        + predicate
+        + " GROUP BY 1,2,3",
+        params,
+    )
+    totals = {
+        market: sum(r["n"] for r in counts if r["market"] == market)
+        for market in ("SG", "HK", "TH")
+    }
+    totals["Total"] = sum(totals.values())
+
+    def entry(bucket, suppressed=False):
+        numbers = {
+            m: sum(
+                r["n"]
+                for r in counts
+                if r["market"] == m
+                and (
+                    r["suppressed"] if suppressed else not r["suppressed"] and r["bucket"] == bucket
+                )
+            )
+            for m in ("SG", "HK", "TH")
+        }
+        numbers["Total"] = sum(numbers.values())
+        return {
+            "bucket": bucket,
+            "counts": numbers,
+            "percentages": {
+                m: round(100 * n / totals[m], 2) if totals[m] else 0 for m, n in numbers.items()
+            },
+        }
+
+    buckets = [entry(b) for b in BUCKETS]
+    scope = buckets[:3]
+    combined = {m: sum(r["counts"][m] for r in scope) for m in totals}
+    historical = conn.execute(
+        "SELECT count(*) FROM job_sorting.job_listings WHERE reason=%s", (HISTORY_REASON,)
+    ).fetchone()[0]
+    reasons = read_rows(
+        conn,
+        "SELECT reason,count(*) n FROM job_sorting.job_listings j WHERE "
+        + predicate
+        + " AND coalesce(bucket,'not_sorted')='not_sorted' AND repeat_of_id IS NULL GROUP BY reason",
+        params,
+    )
+    return {
+        "buckets": buckets,
+        "in_scope": scope,
+        "combined": {
+            "counts": combined,
+            "percentages": {
+                m: round(100 * n / totals[m], 2) if totals[m] else 0 for m, n in combined.items()
+            },
+        },
+        "suppressed": entry("suppressed", True),
+        "totals": totals,
+        "not_sorted_reasons": reasons,
+        "historical_not_sorted": historical,
+    }
+
+
+def render_terminal_nightly(report):
+    """One designed terminal message; private diagnostics stay in checkpoints."""
+    from .nightly_email import render
+
+    return render(report)
+
+
+def service_failure_alert(environ, unit):
+    """Send the nightly crash fallback, or retry an undelivered terminal email.
+
+    The shared checkpoint prevents duplicates. Standalone Collection and
+    Cleaning commands retain their errors in logs rather than send old alerts.
+    """
+    try:
+        if environ.get("BTO_COMBINED_NIGHTLY_EMAIL") == "1":
+            from pathlib import Path
+
+            from bto.filter_and_bucket_job_listings.call_gemini_batch import save, timestamp
+            path = Path("data/job_sorting/nightly.json")
+            state = json.loads(path.read_text()) if path.exists() else {"stages": {}}
+            same_invocation = (not environ.get("INVOCATION_ID") or
+                               state.get("invocation_id") == environ.get("INVOCATION_ID"))
+            if same_invocation and state.get("terminal_email_delivered"):
+                return False
+            if environ.get("SERVICE_RESULT") == "success" and not (
+                same_invocation and state.get("terminal_email_attempted_at")
+            ):
+                return False
+            if not same_invocation:
+                state = {"stages": {}, "started_at": timestamp(),
+                         "invocation_id": environ.get("INVOCATION_ID")}
+            if state.get("run_id"):
+                batch_path = path.parent / "runs" / state["run_id"] / "batch.json"
+                if batch_path.exists():
+                    state["sorting"] = json.loads(batch_path.read_text())
+            if state.get("status") not in {"complete", "failed"}:
+                state.update(status="failed", process_stopped=True,
+                             stopped_at=timestamp(),
+                             failed_stage=state.get("sorting", {}).get("stage") or state.get("stage", unit),
+                             error="Service terminated: " + environ.get("SERVICE_RESULT", "unknown"))
+            subject, plain, html = render_terminal_nightly(state)
+            state["terminal_email_attempted_at"] = timestamp()
+            save(path, state)
+            settings = {"smtp_host": environ.get("SMTP_HOST", ""), "smtp_port": int(environ.get("SMTP_PORT", 587)),
+                        "smtp_username": environ.get("SMTP_USERNAME", ""), "smtp_password": environ.get("SMTP_PASSWORD", ""),
+                        "notify_email_to": environ.get("NOTIFY_EMAIL_TO", "")}
+            state["terminal_email_delivered"] = send_email(settings, subject, plain, html=html)
+            save(path, state)
+            return state["terminal_email_delivered"]
+        return False
     except Exception as error:
-        log.error("service failure alert not sent: %s", error)
+        log_failure(log, "service failure alert not sent unit=%s", unit, error=error)
         return False
 
 

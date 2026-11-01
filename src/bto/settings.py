@@ -1,20 +1,14 @@
-"""Runtime configuration: environment, secrets, and which board × market runs.
+"""Load runtime settings and select supported board × market runs.
 
-Called by:
-    __main__ (CLI entrypoints), fetch_job_listings.run
+Environment variables take precedence over the local .env file. systemd
+supplies production settings from /etc/bto/env. PostgreSQL-only commands use
+load_postgres() without requiring collection or provider credentials.
 
-Environment variables win; a repo-root .env file fills the gaps for laptop
-runs. On the Lightsail box, systemd supplies the environment from /etc/bto/env.
-
-Main functions:
-    load()            -> dict of validated runtime settings
-    enabled_runs()    -> [(board, market)] switched on for the nightly schedule
-    supported_runs()  -> every proven board × market pairing
-
-This module holds no board behaviour. Search terms live in each board's
-searches.py; per-market source configuration lives in each board's markets.py.
+Search terms live in each board's private searches.py; source configuration
+lives with its adapter.
 """
 
+import math
 import os
 from pathlib import Path
 
@@ -84,9 +78,14 @@ def _dotenv():
     return values
 
 
+def private_dir():
+    """Locate the optional private checkout; BTO_PRIVATE_DIR overrides <repo>/private."""
+    value = os.environ.get("BTO_PRIVATE_DIR") or _dotenv().get("BTO_PRIVATE_DIR")
+    return Path(value).expanduser() if value else REPO_ROOT / "private"
+
+
 def load():
-    """Validated runtime settings. Garbage config dies here with the variable
-    named, not forty minutes into a run with a bare traceback."""
+    """Validate collection settings before starting work."""
     fallback = _dotenv()
 
     def get(key, default=None):
@@ -108,17 +107,12 @@ def load():
             value = float(raw)
         except (TypeError, ValueError):
             raise SystemExit(f"{key} must be a number, got {raw!r}")
-        if not value >= minimum:            # also rejects NaN
-            raise SystemExit(f"{key} must be >= {minimum}, got {value}")
+        if not math.isfinite(value) or value < minimum:
+            raise SystemExit(f"{key} must be finite and >= {minimum}, got {raw!r}")
         return value
 
-    # psycopg reads the libpq PG* variables from the process environment —
-    # which systemd provides on the box. For laptop runs the .env fallback
-    # must reach the environment too, or psycopg silently tries a local
-    # socket instead of the tunnel.
-    for key in ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"):
-        if key not in os.environ and fallback.get(key):
-            os.environ[key] = fallback[key]
+    # libpq reads the environment directly, so local .env values must reach it.
+    _load_postgres_environment(fallback)
 
     host = (get("DATABRICKS_HOST") or "").rstrip("/")
     token = get("DATABRICKS_TOKEN") or ""
@@ -128,8 +122,7 @@ def load():
     # The live catalog name is configuration, never hardcoded.
     catalog = get("DATABRICKS_CATALOG") or ""
     if not catalog:
-        raise SystemExit("DATABRICKS_CATALOG missing — the target catalog is "
-                         "configuration (currently `bto`), never a hardcode")
+        raise SystemExit("DATABRICKS_CATALOG missing — set it in .env or /etc/bto/env")
 
     return {
         "databricks_host": host,
@@ -138,6 +131,8 @@ def load():
         "databricks_catalog": catalog,
 
         "apify_token": get("APIFY_TOKEN") or "",
+
+        "combined_nightly_email": get("BTO_COMBINED_NIGHTLY_EMAIL", "0") == "1",
 
         # Email. Unset SMTP means alerts are logged and collection carries on.
         "smtp_host": get("SMTP_HOST") or "",
@@ -165,9 +160,7 @@ def load():
         # written with full_sweep = FALSE so it can never look like a full one.
         "terms_limit": _int("TERMS_LIMIT", "0"),
 
-        # Where one fetch invocation records which runs belong to it, so the
-        # next stage in the service chain (today: the summary email) reports
-        # on exactly that execution. Local runtime state, never committed.
+        # Saved collection run IDs are shared by nightly processing and summaries.
         "run_handoff_path": get("RUN_HANDOFF_PATH",
                                 str(REPO_ROOT / "data" / "last_fetch.json")),
     }
@@ -179,3 +172,16 @@ def enabled_runs():
 
 def supported_runs():
     return list(SUPPORTED)
+
+
+def _load_postgres_environment(fallback):
+    for key in ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"):
+        if key not in os.environ and fallback.get(key):
+            os.environ[key] = fallback[key]
+
+
+def load_postgres(fallback=None):
+    """Load libpq settings without requiring analytical/provider settings."""
+    _load_postgres_environment(_dotenv() if fallback is None else fallback)
+    if not os.environ.get("PGDATABASE"):
+        raise ValueError("PGDATABASE is missing from private configuration")

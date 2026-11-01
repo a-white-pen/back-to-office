@@ -1,16 +1,15 @@
 .PHONY: help test lint scrape
-.DEFAULT_GOAL := help
 
 PY := .venv/bin/python
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
 
-test:  ## run the test suite (offline, no live calls, no spend)
-	$(PY) -m pytest -q
+test:  ## offline tests, including private/tests when present
+	$(PY) -m pytest -q tests $(wildcard private/tests)
 
 lint:  ## check style
-	$(PY) -m ruff check src tests
+	$(PY) -m ruff check src tests $(wildcard private/tests)
 
-scrape:  ## one board: make scrape BOARD=mcf
+scrape:  ## collect one board: make scrape BOARD=mcf
 	$(PY) -m bto collect --board $(BOARD)

@@ -1,33 +1,43 @@
-# ─── secrets — never commit ──────────────────────────────────
+# Credentials and local settings
 .env
 .env.*
 !.env.example
 *.pem
 *.key
-# a local copy of the box's root-owned /etc/bto/env
-etc-bto-env
+*.local.*
+etc-bto-env*
 
-# ─── personal data — never commit (this repo is PUBLIC) ──────
+# Private runtime configuration; example files stay public
+searches.py*
+/src/bto/web/auth_config.py*
+/src/bto/filter_and_bucket_job_listings/preferences/*
+!/src/bto/filter_and_bucket_job_listings/preferences/*.example.py
+/src/bto/filter_and_bucket_job_listings/triage_prompt.py*
+/src/bto/filter_and_bucket_job_listings/extraction_prompt.py*
+
+/src/bto/filter_and_bucket_job_listings/triage_policy.py*
+
+/src/bto/find_job_contacts/limits.py*
+
+# Private work and tests
+/private/
+tests/
 cv-bank/
 applications/
-# private notes and machine-local config, in any folder
-**/*.local.md
-**/*.local.json
-# search strategy is private local configuration, any board, present
-# or future; searches.example.py is the committed template
-searches.py
 
-# ─── tests — kept local, not published ───────────────────────
-# fixtures are real provider captures
-tests/
-
-# ─── local runtime state ─────────────────────────────────────
+# Runtime data
 data/
 snapshot/
 *.log
 *.db
+*.db-*
+*.sqlite*
+*.pickle
+review_snapshot.*
+review_publication.*
+review_handover.*
 
-# ─── python ──────────────────────────────────────────────────
+# Python and build output
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -38,7 +48,7 @@ build/
 dist/
 *.whl
 
-# ─── os / editor / agent ─────────────────────────────────────
+# OS, editors and agents
 .DS_Store
 .vscode/
 .claude/

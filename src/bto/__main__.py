@@ -1,28 +1,7 @@
-"""CLI entrypoints: python -m bto {collect | summarise | preflight}.
+"""Run collection, preflight checks and manual collection summaries.
 
-Called by:
-    the systemd units on the Lightsail box (fetch-job-listings.timer at
-    03:30 SGT; send-job-listings-summary-email chained after each fetch
-    execution), and by hand.
-
-Calls:
-    settings, fetch_job_listings.run, send_notifications.notify,
-    storage.databricks
-
-    collect     run enabled board × market pairs (or one, via --board/--market)
-    summarise   email the summary for the fetch execution recorded in the
-                handoff file (data/last_fetch.json)
-    preflight   prove every dependency of the unattended run, collect nothing
-
-One summary per fetch execution, scoped to exactly the runs that execution
-launched — never "everything from today". The scheduled path leaves the
-summary to the systemd chain (fetch-job-listings.service fires
-send-job-listings-summary-email.service on completion, success or failure);
-a manual collect sends its own summary as it finishes. Both use the same
-summary code and format.
-
-Logging goes to stdout/stderr in plain lines; systemd forwards both to
-journald. There is no logging framework of our own.
+Manual summaries use the exact run IDs in the saved collection handoff.
+The nightly workflow owns its terminal email and downstream processing.
 """
 
 import argparse
@@ -31,7 +10,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from . import settings as settings_module
-from .fetch_job_listings import run as run_module
+from .log_errors import log_failure
 from .send_notifications import notify
 from .storage.databricks.connection import Databricks, DatabricksError, table_name
 
@@ -50,9 +29,7 @@ def _configure_logging(verbose):
 
 
 def _selected_pairs(args):
-    """The board × market pairs this invocation runs: all enabled ones by
-    default, narrowed by --board/--market. Naming a supported-but-disabled
-    pair explicitly (both flags) runs it — that is the manual override."""
+    """Select enabled board and market pairs, or an explicit supported pair."""
     if args.board and args.market:
         pair = (args.board, args.market)
         if pair not in settings_module.supported_runs():
@@ -70,12 +47,14 @@ def _selected_pairs(args):
 
 
 def cmd_collect(args):
+    """Collect the selected sources and send a summary for a manual run."""
+    from .fetch_job_listings import run as run_module
+
     settings = settings_module.load()
     pairs = _selected_pairs(args)
     results = run_module.collect_all(settings, pairs, args.trigger)
-    # A scheduled invocation leaves the summary to the systemd chain
-    # (OnSuccess=/OnFailure= on fetch-job-listings.service), so it is sent
-    # exactly once. A manual invocation has no chain, so it summarises itself.
+    # The nightly owner sends the scheduled terminal email. Manual collection
+    # retains its explicit handoff-scoped summary.
     if args.trigger != "scheduled":
         summarise_execution(settings)
     # Returning from collect_all is the cleaning gate: its finished handoff
@@ -91,16 +70,16 @@ def cmd_collect(args):
 
 
 def cmd_preflight(args):
+    from .fetch_job_listings import run as run_module
+
     settings = settings_module.load()
     return 0 if run_module.preflight(settings) else 1
 
 
 def summarise_execution(settings, handoff_path=None):
-    """Email the summary for ONE fetch execution — the one recorded in the
-    handoff file. Scoped to that execution's own run_ids (or, if the fetch
-    never recorded a clean finish, to its trigger + pairs + start time), so
-    a scheduled summary never includes smoke runs and a smoke summary never
-    includes scheduled ones."""
+    """Email the run IDs in one handoff; refuse an unknown execution scope."""
+    from .fetch_job_listings import run as run_module
+
     path = handoff_path or settings["run_handoff_path"]
     try:
         handoff = run_module.read_handoff(path)
@@ -108,13 +87,16 @@ def summarise_execution(settings, handoff_path=None):
         log.error("no fetch execution to summarise: %s does not exist", path)
         return False
 
+    run_ids = handoff.get("run_ids") or []
+    if not run_ids:
+        log.error("collection summary not sent: %s has no saved run IDs; "
+                  "this execution's results are unknown", path)
+        return False
+
     catalog = settings["databricks_catalog"]
-    # No waiting out a warehouse refusal here: this unit is allowed 15
-    # minutes, so a 35-minute wait would be killed before it could email, and
-    # the collection it summarises has already waited out any refusal.
+    # Report a warehouse refusal promptly instead of waiting to build the summary.
     dbx = Databricks(settings["databricks_host"], settings["databricks_token"],
                      settings["databricks_warehouse_id"], refusal_retries=0)
-    run_ids = handoff.get("run_ids") or []
     interrupted = handoff.get("state") != "finished"
     try:
         started_sgt = datetime.fromisoformat(handoff["started_at"]) \
@@ -130,33 +112,18 @@ def summarise_execution(settings, handoff_path=None):
         "       fetch_failures, backlog_remaining, error_reason\n"
         f"FROM {table_name(catalog, 'scrape_runs')}\n")
     try:
-        if run_ids and not interrupted:
-            # run_ids are generated internally ([a-z0-9_] only) — safe literals.
-            id_list = ", ".join(f"'{run_id}'" for run_id in run_ids)
-            raw_rows = dbx.query(select + f"WHERE run_id IN ({id_list})\n"
-                                          "ORDER BY started_at")
-        else:
-            # The fetch died before recording its run ids. Scope by what the
-            # execution declared up front: its trigger, its pairs, its start.
-            pair_list = ", ".join(f"'{pair}'"
-                                  for pair in handoff.get("pairs", []))
-            raw_rows = dbx.query(
-                select
-                + "WHERE run_trigger = :trigger\n"
-                "  AND started_at >= CAST(:started AS TIMESTAMP)\n"
-                f"  AND concat(board, '_', market) IN ({pair_list})\n"
-                "ORDER BY started_at",
-                parameters={
-                    "trigger": handoff.get("trigger") or "scheduled",
-                    "started": (handoff.get("started_at") or "")
-                    .replace("T", " ").split("+")[0],
-                })
+        # run_ids are generated internally ([a-z0-9_] only) — safe literals.
+        id_list = ", ".join(f"'{run_id}'" for run_id in run_ids)
+        raw_rows = dbx.query(select + f"WHERE run_id IN ({id_list})\n"
+                                      "ORDER BY started_at")
     except DatabricksError as failure:
-        # The summary is built from Databricks, so an outage used to crash
-        # this command before it emailed anything. Say so instead; the exit
-        # stays non-zero because no summary was produced.
-        log.error("fetch summary unavailable for the %s: %s", label, failure)
-        notify.send_summary_unavailable(settings, label, failure)
+        # Standalone summary errors stay in the log. Nightly failure reporting
+        # belongs to the terminal email, not a separate collection alert.
+        from .send_notifications.nightly_email import error_explanation
+
+        reason = error_explanation(failure) or "See source run records"
+        log_failure(log, "fetch summary unavailable for the %s reason=%s",
+                    label, reason, error=failure)
         return False
 
     def _int(value):
@@ -225,7 +192,7 @@ def main(argv=None):
     summarise.set_defaults(func=cmd_summarise)
 
     preflight = commands.add_parser("preflight",
-                                    help="verify every dependency, collect nothing")
+                                    help="check collection dependencies, collect nothing")
     preflight.set_defaults(func=cmd_preflight)
 
     args = parser.parse_args(argv)

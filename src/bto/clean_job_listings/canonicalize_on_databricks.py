@@ -1,45 +1,9 @@
-"""Full-history canonicalization at production scale: Spark for the
-set-heavy work, the shared Python rules for every decision.
+"""Build a canonical job mapping with Spark and the shared Python matching rules.
 
-Called by:
-    clean_job_listings.run (submits this module's entry point as a
-    Databricks python_wheel_task and waits for it; also imports the SQL
-    builders below so its own Statement API reads execute the same text)
-
-Calls:
-    build_matching_features (document, fingerprint, shingles, title and
-    advertiser helpers), build_candidate_pairs (the locked 42 × 3 banding
-    parameters), build_canonical_mapping (judge_pair, components_from_edges,
-    rows_from_components, validate_candidate, graph_diagnostics)
-
-The locked Spark / driver boundary:
-
-SPARK — read the standardized snapshot N; one row per usable wording with
-the recomputed matching document (asserted equal to the stored fingerprint),
-its sorted distinct shingle-id array, its description-only normalized body,
-stage and normalized title; the stored 128-value MinHash signature exploded
-into the 42 × 3 bands and self-joined; the advertiser + title route from
-memberships; the observed same-listing transitions with advertiser
-continuity; the same-listing pair context; the candidate union with route
-evidence; exact Jaccard on the arrays; the pair verdict through a thin UDF
-around `build_canonical_mapping.judge_pair`; accepted edges only.
-
-DRIVER — collect the accepted edges, the wordings' titles, the memberships
-and the never-usable listings; `components_from_edges` (the guarded
-union-find), `rows_from_components` (winner, ids, sentinels),
-`validate_candidate`; write the run-scoped mapping scratch with
-`canonicalized_at` NULL. Snapshot capture, stamping, joint validation,
-publication and freshness stay in run.py — this module never publishes.
-
-No Spark ML MinHashLSH, no GraphFrames, no second matching recipe: every
-rule executed here is imported from the modules above.
-
-Main functions:
-    memberships_sql / transitions_sql / documents_sql / never_usable_sql
-        -> the source query text shared with run.py
-    prepare_wording / band_rows / judge_row -> the UDF bodies (pure)
-    canonicalize(spark, frames)  -> (rows, diagnostics)
-    main(argv)                   -> the job entry point
+Spark reads a fixed source version and finds candidate pairs. The driver
+assembles and validates the resulting groups, then writes a scratch mapping.
+run.py owns source capture, publication and freshness checks. This module also
+provides the SQL builders used by the local workflow.
 """
 
 import argparse
@@ -73,12 +37,8 @@ ROUTE_NAMES = ("lsh", "advertiser_title", "listing_history")
 DIAGNOSTICS_MARKER = "BTO_DIAGNOSTICS "
 
 
-# The code that executes inside the Databricks job, as wheel-relative paths:
-# the entry point and every `bto` module it imports, transitively (freshness
-# brings connection with it). A deployed wheel must hold exactly these bytes
-# before it may canonicalize — code identity, enforced at submission time by
-# run.py, never a data-version column. Kept in step with the real
-# import graph by a test.
+# Hash the entry point and every BTO module it imports. Submission requires
+# matching source and wheel bytes; an import-graph test keeps this list complete.
 SPARK_JOB_MODULES = (
     "bto/clean_job_listings/canonicalize_on_databricks.py",
     "bto/clean_job_listings/build_canonical_mapping.py",
@@ -88,9 +48,7 @@ SPARK_JOB_MODULES = (
     "bto/storage/databricks/freshness.py",
     "bto/storage/databricks/connection.py",
 )
-# Package initializers execute on import before any module above: they are
-# part of what runs, so they are hashed too (a wheel could carry code there
-# while every module matched).
+# Package initializers execute too, so include them in the identity check.
 PACKAGE_INITS = (
     "bto/__init__.py",
     "bto/clean_job_listings/__init__.py",
@@ -171,22 +129,20 @@ def _metadata_field(metadata, field):
     return None
 
 
+# These resource types in their package-data folders are not Python imports.
+# Other non-source files remain refused, including native extensions and bytecode.
+PACKAGE_RESOURCE_SUFFIXES = {
+    "bto/send_notifications": frozenset({".html"}),
+    "bto/web/templates": frozenset({".html"}),
+    "bto/web/static": frozenset({".css", ".js"}),
+}
+
+
 def archive_problems(wheel):
-    """Everything in the archive that could change what executes without
-    touching the hashed modules: duplicate members (a second copy of a path
-    wins on install); members outside the package and its one dist-info
-    directory, and `.pth` files anywhere (they run or install code); under
-    `bto/` anything but `.py` source — Python imports an extension module
-    (`.so`, `.pyd`) in preference to a `.py` of the same stem and executes
-    a hash-unchecked `__pycache__` `.pyc` without reading the `.py`; a
-    directory named like a module (`bto/x/mod/` beside `bto/x/mod.py`),
-    which is imported instead of the module once it holds an `__init__`;
-    a console entry point that does not lead to this module's `main`;
-    dependencies the source does not declare (pip would install them); and a
-    package name or version other than the installed source's — Databricks
-    serverless reuses a cached environment for an unchanged package version,
-    so changed code must always ship under a new version (deploy/README.md),
-    and a wheel still claiming the previous version is refused."""
+    """Reject wheel contents that could change the code or environment being verified.
+
+    Check archive paths, importable files, entry points, dependencies and package
+    identity. Reject duplicate members and alternate code that could shadow source."""
     problems = []
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -210,11 +166,12 @@ def archive_problems(wheel):
                 problems.append(f"{name}: unexpected archive member (a .pth "
                                 f"file runs at interpreter start-up)")
             elif name.startswith("bto/"):
-                if not name.endswith(".py") or "__pycache__" in parts:
-                    problems.append(f"{name}: only .py source modules belong "
-                                    f"under bto/ (an extension module, bytecode "
-                                    f"or data file could be imported instead of "
-                                    f"a verified module)")
+                directory, _, filename = name.rpartition("/")
+                resource = Path(filename).suffix in PACKAGE_RESOURCE_SUFFIXES.get(directory, ())
+                if (not name.endswith(".py") and not resource) or "__pycache__" in parts:
+                    problems.append(f"{name}: only .py source and supported web/email assets "
+                                    f"belong under bto/ (an extension module, bytecode "
+                                    f"or unsupported file could replace a verified module)")
             elif not _DIST_INFO.match(name):
                 problems.append(f"{name}: unexpected archive member (only bto/ "
                                 f"modules and one bto-*.dist-info/ belong here)")
@@ -762,21 +719,10 @@ class _SparkQueries:
 
 
 def extension_baseline(spark, source, version, mapping):
-    """The provable baseline, or FullRebuildRequired.
+    """Prove the baseline and return its source version and fixed mapping snapshot.
 
-    Returns (P, mapping pinned at the version these checks read), so every
-    later read of the baseline sees exactly the rows validated here. The
-    job — not run.py — owns this gate, so there is one implementation of
-    the incremental prerequisites. The table PROPERTY cannot be read at a
-    pinned version, which is safe under the system's single-writer rule
-    (one cleaning run at a time, the assumption behind run-scoped scratch
-    names) and is re-proven by run.py's pre/post publication race checks.
-
-    P is the standardized version the mapping was published against, and
-    the incremental path is allowed only when every standardized commit in
-    (P, N] merely INSERTED observations: an updated or deleted row could
-    have changed evidence the baseline already relied on.
-    """
+    Only maintenance and insert-only commits may follow that source version.
+    Table properties rely on the single-writer rule and publication race checks."""
     shim = _SparkQueries(spark)
     if not freshness.table_exists(shim, mapping):
         raise extend.FullRebuildRequired("no_baseline_mapping", mapping)
@@ -822,18 +768,10 @@ def observations_sql(snapshot, runs):
 
 
 def load_extension_frames(spark, snapshot_n, snapshot_p, runs, mapping_pinned):
-    """The extension's four source frames: both pinned standardized
-    generations, the pinned baseline rows, and the never-usable listings
-    at N (sentinels are regenerated, never copied).
+    """Read both source versions, the fixed baseline and current sentinel listings.
 
-    Both generations are guarded, and the two failures mean different things.
-    N undetermined is fatal: the result being built is not defined, and the
-    full-history rebuild would read the same ambiguity, so it must not be
-    caught. P undetermined only means the BASELINE cannot be reasoned from —
-    the extension would compare against a representative the published
-    mapping may never have used — while N itself may be perfectly determinate
-    because a later observation superseded the tie. That is a fallback, not a
-    refusal: it must not abort a valid full-history build at N."""
+    Ambiguous current evidence stops the build. An ambiguous baseline only prevents
+    incremental extension, so the caller can still rebuild the current history."""
     require_determinate_representatives(spark, snapshot_n, runs)
     try:
         require_determinate_representatives(spark, snapshot_p, runs)
@@ -851,17 +789,10 @@ def load_extension_frames(spark, snapshot_n, snapshot_p, runs, mapping_pinned):
 
 
 def extend_on_spark(spark, frames, dump=None):
-    """Spark: the P→N batch, the seed evidence, region-restricted candidate
-    discovery and pair judgment. Driver: the shared closure and assembly
-    rules from extend_canonical_mapping. Returns (rows, diagnostics) or
-    raises FullRebuildRequired.
+    """Find and judge pairs in each expanding region, then assemble groups on the driver.
 
-    Every candidate frame below is scoped to the CURRENT region, recomputed
-    each closure round. Scoping them to the seeds instead would be the one
-    quiet way to get this wrong: a wording enters the region because its
-    baseline component did, and its listing may hold no seed at all, so its
-    transitions and same-listing context would simply never be generated.
-    """
+    Recompute candidates for the whole current region each round; using only the
+    original seeds would miss evidence from newly included listings."""
     from pyspark.sql import functions as F
     from pyspark.sql.window import Window
     wording_type, band_type, verdict_type, _ = _types()
@@ -1234,16 +1165,10 @@ def _assemble_extension(spark, frames, accepted, new_fps, region, base_rows,
 
 
 def build_candidate(spark, source, version, runs, mapping=None, dump=None):
-    """The complete candidate mapping for standardized version N.
+    """Build a complete mapping, extending a proven baseline when possible.
 
-    ONE decision point: with a baseline mapping, try the incremental
-    extension; without one — or on any `FullRebuildRequired` condition —
-    build the full history. Both produce the same semantic product, and the
-    caller cannot tell them apart except through `mode` and the fallback
-    reason in the diagnostics. A `CanonicalizationFailed` is NOT a fallback:
-    it means the data or the worker environment is wrong, and the run must
-    stop rather than quietly rebuild around it.
-    """
+    FullRebuildRequired selects a full rebuild. CanonicalizationFailed stops the
+    run because rebuilding cannot safely resolve invalid evidence or code."""
     snapshot = pinned(source, version)
     fallback_reason = fallback_detail = None
     if mapping:
