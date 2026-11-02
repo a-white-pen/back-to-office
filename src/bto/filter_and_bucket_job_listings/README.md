@@ -169,8 +169,8 @@ processing and recovery and are separate from the website's Review cache.
 
 ### Initial history and catch-up
 
-The initial pull loads all Silver history. Processing begins at **03:00
-Singapore time on 9 October 2026**. Earlier wordings remain history-only Not
+The initial pull loads all Silver history. Processing begins at the private
+processing start in `triage_policy.py`. Earlier wordings remain history-only Not
 sorted, with reason `not read: before processing window`; normal processing
 and re-sorts exclude them. Repeat suppression cannot use unjudged old history.
 An unfinished initial load blocks ordinary nightly pulling.
