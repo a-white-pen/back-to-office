@@ -1,177 +1,185 @@
 # Deployment
 
-BTO runs on an Ubuntu AWS Lightsail host in Singapore. The reviewed checkout
-lives at `/opt/bto`, its virtual environment at `/opt/bto/.venv`, and its single
-deployed wheel at `/opt/bto/wheels/`. Secrets are outside the repository in the
-root-owned `0600` file `/etc/bto/env`, loaded by systemd through
-`EnvironmentFile=`. Source-controlled units live in [systemd/](systemd/) and
-are installed in `/etc/systemd/system/`.
+BTO runs on an Ubuntu AWS Lightsail host in Singapore. The nightly checkout is
+`/opt/bto`, its virtual environment is `/opt/bto/.venv`, and `/opt/bto/wheels/`
+holds one deployed wheel. systemd loads secrets from `/etc/bto/env`, owned by
+root with mode `0600`.
 
-The host accepts SSH only. PostgreSQL is not exposed to the internet.
+Caddy serves the web front ends. PostgreSQL listens on loopback only; remote
+administration uses an SSH tunnel. Its table contracts belong to the
+[PostgreSQL data dictionary](../src/bto/storage/postgres/data-dictionary.md).
 
-## Deployment flow
+## What runs each night
 
 ```text
-fetch-job-listings.timer (03:30 SGT nightly)
-    └──> fetch-job-listings.service
-         │    a provider outcome of ok, partial or failed is not a
-         │    non-zero exit; a failed board is not a failed service
-         │
-         ├── safe completion (exit 0)
-         │   ├──> send-job-listings-summary-email.service
-         │   └──> clean-job-listings.service
-         │        └──> Databricks
-         │
-         └── unsafe termination (non-zero: crash, configuration, kill)
-             ├──> send-job-listings-summary-email.service
-             └──> fallback alert: cleaning skipped
+nightly-run.timer (03:30 SGT)
+    → nightly-run.service
+    → collect job listings
+    → clean and canonicalize
+    → load into PostgreSQL, filter and bucket (including Gemini Batch work)
+    → refresh the live Review cache and verify it loaded
+    → send one terminal email
 ```
 
-The fetch timer has `Persistent=false`, so a firing missed while the host is
-down is skipped rather than run late. The summary service runs after every
-fetch execution and attempts email delivery. Cleaning runs only after exit 0
-from the fetch and has no timer of its own.
+The timer skips missed firings (`Persistent=false`). The next collection compares
+then-current board results with saved state; listings removed during downtime
+may no longer be available. Controlled board failures
+do not stop the other board × market runs or block cleaning of usable results.
+The email reports any lost coverage.
 
-Exit 0 means collection completed normally and wrote its finished handoff.
-Provider outcomes remain `ok`, `partial`, or `failed`, but none blocks cleaning
-of the Bronze observations that landed. A crash, configuration failure, or kill
-exits non-zero and blocks cleaning. The fetch fallback then attempts an explicit
-skipped-cleaning alert.
+The workflow attempts a completion email only after Review publication is
+confirmed. A reported stage failure produces a failure email; publication
+failures appear under **Rules & Review**, with a reason. systemd also attempts a
+fallback alert if the process stops before Python can report. Delivery failures
+are logged; email delivery is not guaranteed.
 
-Both success targets are intentionally listed on one space-separated
-`OnSuccess=` directive. systemd activates both; neither replaces the other.
+The nightly Python launcher enforces these whole-stage timeouts:
 
-## systemd units
-
-| Unit | Purpose |
+| Stage | Time limit |
 | :--- | :--- |
-| `fetch-job-listings.timer` | Starts the nightly fetch at 03:30 SGT. |
-| `fetch-job-listings.service` | Runs all configured board × market fetches. It does not restart automatically. Its fallback attempts to report unsafe termination and skipped cleaning. |
-| `send-job-listings-summary-email.service` | Attempts to send one success/failure summary for the scheduled fetch execution. It has no timer. |
-| `clean-job-listings.service` | Runs incremental standardization, reconciliation, and Databricks canonicalization after a successful fetch. It has no timer or automatic restart. |
+| Collection | Six hours. |
+| Cleaning: standardization and canonicalization | Four hours. |
+| Filtering/bucketing, including Gemini triage and extraction | No overall morning cutoff; individual retry and spending guards still apply. |
 
-Cleaning uses the production command:
+If collection or cleaning exceeds its limit, the launcher kills that local
+command, stops the remaining workflow and reports the failure in the email.
+Remote provider work has its own limits; inspect its state before rerunning an
+interrupted stage. Cleaning does not include Gemini triage or extraction.
 
-```bash
-/opt/bto/.venv/bin/python -m bto.clean_job_listings.run \
-  --stage nightly --engine databricks --wheel /opt/bto/wheels
-```
+A failure does not trigger an immediate systemd restart loop. The timer still
+starts the service at 03:30 SGT the next day, provided it is no longer running.
+The next invocation either resumes unfinished sorting or starts a new night's
+collection, as described under recovery below.
 
-The initial production Silver tables require a deliberate, explicitly approved
-full-history build before the nightly cleaning chain is activated. The rules
-for that build belong to the
-[cleaning README](../src/bto/clean_job_listings/README.md) and
-[contract](../src/bto/clean_job_listings/docs/CONTRACT.md), not this deployment guide.
+## Deployment files and private configuration
+
+| Source file | Installed location | Purpose |
+| :--- | :--- | :--- |
+| [nightly-run.timer](systemd/nightly-run.timer) | `/etc/systemd/system/nightly-run.timer` | Starts the nightly workflow. |
+| [nightly-run.service](systemd/nightly-run.service) | `/etc/systemd/system/nightly-run.service` | Runs the workflow and its terminal email. |
+
+Use the keys in [.env.example](../.env.example) for `/etc/bto/env`. In addition to
+collection, Databricks, PostgreSQL and SMTP settings, nightly processing needs
+the two Gemini Batch API keys and the `BTO_REVIEW_REFRESH_*` settings. The refresh
+URL is the live HTTPS origin; the credentials are the existing admin login.
+Provision private searches, preferences, prompts and web authentication files
+separately. They must not enter the public repository or wheel.
+
+Cache publication is called directly by nightly after sorting validation.
+Provision its serving paths, account, service, readiness address and extra job
+checks in private host configuration. Deploy the matching serving helper with
+the nightly caller, and grant that caller non-interactive sudo only for the
+configured helper command. Memory limits, handover and rollback are documented
+in the [web README](../src/bto/web/README.md#nightly-refresh).
 
 ## Installing or redeploying
 
-1. Sync the reviewed checkout to `/opt/bto`.
-2. Install or update the application in `/opt/bto/.venv`:
+1. Confirm no nightly run or cache publication is active. Back up the deployed
+   source, virtual environments, wheel, units and private configuration in a
+   root-only rollback directory. Preserve unrelated applications and services.
+
+2. Sync the reviewed checkout to `/opt/bto` and provision its private files.
+   On a new host, create the virtual environment with Python 3.12 or newer:
+   `python3 -m venv /opt/bto/.venv`.
+   Any executable wheel-code change requires a new `version` in `pyproject.toml`
+   before building: Databricks may cache an installed version. Never deploy
+   different wheel bytes under a version already used.
 
    ```bash
    cd /opt/bto
    .venv/bin/python -m pip install -e .
+   .venv/bin/python -m bto.nightly_run --check-config
    ```
 
-3. Export the reviewed commit to a clean temporary tree and build one wheel
-   there, so ignored private files from the live checkout cannot be packaged:
+   The configuration check validates private preferences and both prompts;
+   it starts no jobs and makes no provider calls. Run it as the nightly service
+   account before enabling or restarting the workflow. Nightly repeats this
+   check before Collection. On the serving checkout, validate preferences as
+   its service account and check an assessed JD; a working login page alone
+   does not verify Review's configuration.
+
+3. Build the wheel from the reviewed commit exported to a clean temporary tree.
+   This keeps ignored private files from the live checkout out of the package.
 
    ```bash
    build_dir="$(mktemp -d)"
    git archive --format=tar HEAD | tar -x -C "$build_dir"
    /opt/bto/.venv/bin/python -m pip wheel --no-deps \
      -w "$build_dir/dist" "$build_dir"
+   /opt/bto/.venv/bin/python -m zipfile -l "$build_dir"/dist/bto-*.whl
    ```
 
-4. Inspect the wheel before deployment:
+   Inspect the contents: searches, preferences, prompts and authentication
+   configuration must contain only their safe examples. Replace the wheel in
+   `/opt/bto/wheels/` so it contains exactly one `bto-*.whl`. Source and wheel
+   must come from the same reviewed commit. Do not commit wheels or build output.
 
-   ```bash
-   /opt/bto/.venv/bin/python -m zipfile -l "$build_dir"/dist/bto-*.whl \
-     | grep '/searches'
-   ```
+4. Deploy the matching Review publication helper in its privately configured
+   serving checkout. When migrating an existing host, retire the old collection/cleaning/email chain
+   and remove `publish-review-cache.path` and `publish-review-cache.service`.
+   Disable their triggers before removing installed unit files. Do this only
+   while the old workflows are idle; never run both nightly chains together.
 
-   Every match must end in `searches.example.py`; private `searches.py`
-   implementations must be absent.
-5. Replace the deployed wheel in `/opt/bto/wheels/`; that directory must hold
-   exactly one `bto-*.whl`.
-6. Copy the unit files from `deploy/systemd/` on an initial install, or only
-   changed units on a redeploy, to
-   `/etc/systemd/system/`, then reload systemd:
+5. Install the two files from `deploy/systemd/` in `/etc/systemd/system/`,
+   then reload systemd:
 
    ```bash
    sudo systemctl daemon-reload
    ```
 
-7. On an initial install, after the approved full-history build is complete,
-   enable and start the timer that activates the nightly chain:
+6. On a new installation, complete the explicitly approved storage setup and
+   initial loads before activating nightly processing:
+
+   - Build full-history Silver following the
+     [cleaning README](../src/bto/clean_job_listings/README.md) and
+     [cleaning contract](../src/bto/clean_job_listings/docs/CONTRACT.md).
+   - Initialize and verify PostgreSQL's sorting and Review contracts, then load
+     the initial Silver history into PostgreSQL. Follow the
+     [filtering/bucketing entry points](../src/bto/filter_and_bucket_job_listings/README.md#local-entry-points-and-execution-gates)
+     and [Review setup](../src/bto/web/README.md#localhost).
+
+   On an existing installation, verify the required contracts and initial loads
+   rather than recreating them. Then enable the timer:
 
    ```bash
-   sudo systemctl enable --now fetch-job-listings.timer
+   sudo systemctl enable --now nightly-run.timer
    ```
 
-   The cleaning and summary services are static; the fetch service activates
-   them through `OnSuccess=` and `OnFailure=`.
+Individual stages retain their Python CLI commands. Do not enable a second
+sorting trigger alongside the nightly workflow.
 
-Install local development and parity-test dependencies with
-`python -m pip install -e '.[dev]'`.
-
-## Canonicalization wheel
-
-The one deployed wheel is built from the same reviewed checkout as the source
-installation and is reused by nightly runs until the next deployment.
-Databricks may cache an installed package version, so any deployment that
-changes executable wheel code must first assign a new `version` in
-`pyproject.toml`. Never deploy different wheel bytes under a version already
-used. Wheels and `dist/` are not committed.
-
-## Logs and inspection
+## Logs and recovery
 
 ```bash
-systemctl status fetch-job-listings.service
-systemctl status send-job-listings-summary-email.service
-systemctl status clean-job-listings.service
-systemctl list-timers fetch-job-listings.timer
-journalctl -u fetch-job-listings.service
-journalctl -u send-job-listings-summary-email.service
-journalctl -u clean-job-listings.service
+systemctl status nightly-run.service
+systemctl list-timers nightly-run.timer
+journalctl -u nightly-run
+# Inspect the privately configured serving service journal as well.
 ```
 
-journald is persistent, so logs survive host restarts.
+Logs go to journald and identify the run, stage, attempt, remote Batch job
+and publication request. Unexpected failures include error types and call
+locations. Exception messages, source lines and local variables are omitted
+from these traces to protect private inputs and provider data. Provider bodies and submitted inputs remain in private
+checkpoints under ignored `data/job_sorting/`.
 
-## Alerts and failures
+- `nightly.json` records the logical run and terminal-email progress.
+- `runs/<run_id>/batch.json` records submissions, remote IDs and saved results.
+- At the next scheduled start, unfinished filtering/bucketing or cache
+  publication resumes the saved run, skipping completed collection and cleaning.
+  That invocation finishes the resumed run and exits; it does not then collect
+  a fresh night's listings. Never create a fresh directory to bypass an
+  unfinished Batch. A completed same-night invocation does not collect or email again.
+- After a collection or cleaning failure, a later night's scheduled start creates
+  a new nightly run. Same-night reruns of those interrupted stages require inspection;
+  the launcher does not automatically repeat them.
+- A publication-only failure can resume publication using completed paid work.
+  The previous Review snapshot is preserved or restored on failure.
+- Inspect interrupted collection or cleaning before rerunning. Do not overlap
+  manual collection with full-history canonicalization finalization, and never
+  edit Bronze data to recover cleaning.
 
-The summary service attempts a fetch summary after success or failure.
-Successful production cleaning attempts its own summary and reports handled
-problems separately; a run with quarantined rows attempts both. Email delivery
-does not change whether the underlying operation succeeded or failed. If a
-handled cleaning failure's Python alert is not delivered, cleaning exits 6 so
-systemd can attempt its fallback notification. The fetch and cleaning services
-have `ExecStopPost=` fallbacks for failures Python could not report; the summary
-service does not. The fetch fallback also attempts to report that cleaning was
-skipped. If any email delivery fails, or if the interpreter, source tree, or
-environment file is unavailable, rely on systemd status and journald.
-
-No service automatically restarts. Diagnose the failure before a manual rerun;
-otherwise the next successful nightly fetch starts cleaning again.
-
-## PostgreSQL
-
-PostgreSQL is BTO's operational store and currently records provider costs. It
-listens only on loopback; port 5432 is never opened to the internet. Remote
-administration uses an SSH tunnel, with the database client connecting to
-`localhost:5432` through that tunnel. SSH identity and database credentials
-remain local secrets; runtime database settings come from `/etc/bto/env`.
-
-The [PostgreSQL data dictionary](../src/bto/storage/postgres/data-dictionary.md)
-owns the data contract.
-
-## Recovery rules
-
-- Never edit, reset, or delete Bronze data to recover cleaning. Fix the cause
-  and rebuild or rerun from the immutable source data.
-- Do not overlap a manual fetch with the finalization of a full-history
-  canonicalization build; new observations can invalidate its final
-  reconciliation.
-- Before any manual rerun, confirm no collection or cleaning process is active
-  and read the relevant journal. Ordinary nightly cleaning work is atomic and
-  safe to retry after the cause is fixed.
+Rollback also requires an idle workflow. Restore the backed-up source, virtual
+environments, single wheel, units and configuration, reload systemd, and confirm
+the 03:30 SGT timer. Retain PostgreSQL data, runtime checkpoints, remote Batch IDs
+and downloaded results: rolling back code does not cancel paid work.

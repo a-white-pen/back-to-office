@@ -1,37 +1,9 @@
-"""Build the two Silver cleaning products from Bronze observations.
+"""Standardize Bronze observations and publish their canonical job mapping.
 
-Standardization runs locally, preserves observation history and publishes
-validated rows. Canonicalization runs locally for development or as a
-Databricks wheel job, then publishes a validated mapping bound to the Delta
-version of `standardized_job_listings` that it read. The nightly run offers
-the published mapping to the job as an incremental baseline; the job proves
-that safe or rebuilds the complete history itself, so what is validated and
-published here is the same complete mapping either way. See README.md for
-the workflow and docs/CONTRACT.md for exact guarantees.
-
-The two Silver tables are published SEPARATELY. Each publication can be
-atomic on its own — a full build replaces standardized with one Delta
-`CREATE OR REPLACE`, a nightly build MERGEs into it — but no single
-transaction covers both tables. A failure after the standardized publication
-therefore leaves the new standardized state published while the mapping is
-still bound to the standardized version it was built from. That mismatched
-pair is exactly what the freshness guard in `storage.databricks.freshness`
-detects, so no consumer trusts it; see also `--stage canonicalize` to
-finish the pair. Scratch tables and staging volumes are cleaned on the
-success path and deliberately left behind on failure, where they are
-evidence.
-
-`--stage promote` publishes an already-validated pair of tables exactly as
-they are, never recomputing — into a suffixed target only: a validation pair
-covers a fraction of Bronze and is never the production tables.
-
-Rows come down through the SQL Statement API in hash buckets sized to
-stay under the 26 MB INLINE result cap. Standardized rows go up as JSONL
-part files through the Files API into a run-scoped staging volume and are
-bulk-read into the scratch table with one INSERT — a handful of uploads
-instead of hundreds of 1 MiB-capped parameter statements. The smaller
-canonical mapping uses JSON-array parameter batches. Bucket counts are measured
-from the selected corpus; nothing assumes the full history fits one call.
+Each Silver table is validated and published separately. The mapping records
+the source version it represents; freshness checks reject an unfinished pair.
+Canonicalization runs locally or in a Databricks wheel job. Failed builds keep
+their scratch data as evidence. See docs/CONTRACT.md for publication guarantees.
 """
 
 import argparse
@@ -47,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import settings as settings_module
+from ..log_errors import log_failure
 from ..send_notifications import notify
 from ..storage.databricks import freshness
 from ..storage.databricks.connection import (
@@ -72,32 +45,19 @@ from . import standardize_job_listings as standardize
 log = logging.getLogger(__name__)
 
 INSERT_BYTE_CAP = 700_000       # combined-parameter ceiling is 1 MiB; stay clear
-# Standardized rows go up as JSONL part files through the Files API and are
-# bulk-read into the scratch table — a handful of uploads plus one INSERT
-# instead of hundreds of parameter-capped statements. ~32 MB per part keeps
-# each upload well-behaved without creating many files.
+# Upload standardized rows in bounded JSONL files, then load them in one INSERT.
 STAGE_FILE_BYTE_CAP = 32_000_000
 # INLINE reads are sized per pair from measured bytes (see _plan_read_buckets);
 # the Statement API's hard ceiling is 26,214,400 bytes per result.
 READ_BYTE_TARGET = 16_000_000
-# Canonical document retrieval sizes its own batches from the usable
-# fingerprint count — Bronze sampling buckets are a different concern and must
-# not force hundreds of near-empty document queries on a small run. ~500 docs
-# per read keeps each INLINE result a few MB, far under the 26 MB ceiling.
+# Size document reads by usable fingerprints, independently of Bronze buckets.
 DOCS_PER_READ = 500
 
-# How long the canonicalization job may run. The default matches the
-# `connection.py` defaults it overrides; `--canonicalize-timeout-hours` raises
-# it for a single run. There is no checkpoint, so a job killed at the deadline
-# discards all work completed during that run.
+# Remote job deadline; --canonicalize-timeout-hours can override it.
+# A terminated job loses its work because canonicalization has no checkpoint.
 CANONICALIZE_TIMEOUT_SECONDS = 3 * 3600
-# The client keeps polling for this much longer than the deadline it gave
-# Databricks. The two clocks do not start together — the server's covers
-# queueing and setup that begin before `wait_run` is even called — so an equal
-# client deadline could abandon a run the service is about to terminate or
-# finish, orphaning its scratch. 10 minutes covers that skew and the 20-second
-# poll interval, and matches the tolerance `wait_run` already allows for
-# consecutive polling failures.
+# Let Databricks decide the job outcome before the client stops polling.
+# This margin covers setup time, polling intervals and temporary connection loss.
 CLIENT_WAIT_MARGIN_SECONDS = 600
 
 # The 45-column Silver schema as Delta DDL — types from the data dictionary.
@@ -250,17 +210,9 @@ def new_build_id(now_utc=None):
 
 
 def _bronze_source(catalog, board, exclude=None):
-    """The Bronze table expression this board's observations are read from.
+    """Select the Bronze population shared by reading, planning and reconciliation.
 
-    Validation drivers narrow it (e.g. a join to a selection table). The
-    reader, the bucket planner AND the source reconciliation all go through
-    it, so whatever population is read is exactly the population reconciled.
-
-    With `exclude` — the standardized table being maintained — the expression
-    is the incremental population: Bronze observations whose exact four-column
-    key is absent from that table (an anti-join; safe because Bronze
-    observation rows are append-only).
-    """
+    With exclude, return only observation keys absent from standardized history."""
     table = observation_table(catalog, board)
     if exclude is None:
         return table
@@ -678,16 +630,10 @@ def _read_never_usable(dbx, source):
 
 
 def deployed_wheel(path):
-    """The deployment-provided bto wheel, resolved only when a Databricks
-    canonicalization is about to run — never built here. `path` is the wheel
-    file itself or the deployment-owned directory holding exactly ONE wheel
-    (the unit file names the directory, so a version bump never edits it, and
-    stale wheels accumulating there are a refusal, never a lottery). Changed
-    code always arrives as a NEW package version: the identity check refuses
-    a wheel whose name or version differs from the installed source, because
-    Databricks serverless reuses a cached environment for an unchanged
-    version (deploy/README.md). Raises FileNotFoundError carrying the
-    operator-facing reason."""
+    """Resolve the supplied wheel file or a directory containing exactly one wheel.
+
+    Never build here. Wheel identity must match the deployed source, and changed
+    code requires a new package version before deployment."""
     if path is None:
         raise FileNotFoundError("the databricks engine needs --wheel: the "
                                 "deployed bto wheel (file or directory)")
@@ -710,20 +656,10 @@ def deployed_wheel(path):
 def _run_on_databricks(dbx, catalog, source, version, scratch, build_id, wheel,
                        baseline=None,
                        timeout_seconds=CANONICALIZE_TIMEOUT_SECONDS):
-    """Submit the packaged canonicalization job for snapshot N and wait: the
-    deployed wheel is uploaded to the code volume and becomes the task
-    environment (with datasketch pinned), so driver and workers run exactly
-    the packaged matching code. The job writes the scratch; every later step
-    (stamp, joint validation, publication) stays here.
+    """Submit matching packaged code and wait for a scratch mapping and diagnostics.
 
-    With `baseline` — the published mapping — the job may extend it instead
-    of rebuilding the whole history, but only when it can prove that safe;
-    it decides that itself and falls back to the full rebuild otherwise, so
-    the result here is the same complete candidate either way.
-
-    `timeout_seconds` is the deadline given to Databricks; this process waits
-    `CLIENT_WAIT_MARGIN_SECONDS` longer, so the service always decides a run's
-    fate first."""
+    The job decides whether the baseline permits extension. Validation and
+    publication stay here; client polling outlasts the remote job deadline."""
     wheel = deployed_wheel(wheel)
     _require(spark_job.wheel_mismatch(wheel), "deployed wheel identity")
     data = wheel.read_bytes()
@@ -779,26 +715,11 @@ def _run_on_databricks(dbx, catalog, source, version, scratch, build_id, wheel,
 def run_canonicalize(dbx, catalog, source, target_suffix, build_id=None,
                      engine="python", wheel=None, baseline=None,
                      timeout_seconds=CANONICALIZE_TIMEOUT_SECONDS):
-    """Build, stamp and validate the mapping CANDIDATE from `source`.
+    """Build and validate a scratch mapping against one captured source version.
 
-    Captures the source's Delta version N BEFORE the first read and pins every
-    read of this canonicalization — memberships, transitions, documents,
-    never-usable listings and the joint validation — to that one immutable
-    snapshot. Publishes nothing; returns (scratch, N, diagnostics): the
-    run-scoped scratch table holding the candidate, the version it must be
-    published against (`publish_mapping`), and the build's graph diagnostics,
-    whose ``mode`` says whether it extended the baseline or rebuilt the whole
-    history (with ``fallback_reason`` when an extension was refused).
-
-    `baseline` offers a published mapping as an incremental starting point on
-    the nightly Databricks path. The job proves that safe or rebuilds the whole
-    history itself, so the candidate validated and published here is the same
-    complete mapping either way. Without a baseline, the authoritative
-    full-history reconstruction runs.
-
-    `timeout_seconds` bounds the Databricks job only; the in-process Python
-    engine has no deadline of its own.
-    """
+    Every source read uses that version. Return (scratch, version, diagnostics)
+    without publishing. A proven baseline may permit incremental construction;
+    the job timeout applies only to the Databricks engine."""
     build_id = build_id or new_build_id()
     scratch = silver_table_name(
         catalog, "_build_" + JOB_CANONICAL_MAPPING_TABLE
@@ -878,20 +799,10 @@ def _stage_mix_rows(mapping, standardized):
 
 
 def _stage_mix_count(dbx, standardized, mapping, buckets=None):
-    """FINAL groups holding both a clearly intern- and a clearly
-    graduate-stage wording — must be zero.
+    """Count final groups mixing clearly intern and graduate wordings; require zero.
 
-    The career-stage rule is matching code, so one row per usable wording
-    comes down to run it, and the full-history result can exceed the Statement
-    API's 26 MB INLINE ceiling in one response. The rows are therefore read in
-    buckets sized from their measured bytes (the same READ_BYTE_TARGET
-    discipline as every other Silver read), keyed by the hash of the GROUP id
-    so every canonical group sits wholly inside one bucket and the per-bucket
-    counts add up to exactly the unpartitioned answer. `pmod` keeps the key in
-    range for any hash value; row accounting across the buckets guards the
-    partition itself. Pure I/O partitioning — the rule, the groups and the
-    verdict are untouched.
-    """
+    Read by group-hash buckets so each group stays together and results remain
+    below the Statement API response limit. Reconcile the total rows read."""
     rows_sql = _stage_mix_rows(mapping, standardized)
     buckets = buckets or _silver_read_buckets(
         dbx, rows_sql, "s.canonical_job_id, s.title")
@@ -937,20 +848,11 @@ def _validate_joint(dbx, standardized, mapping):
 
 
 def publish_mapping(dbx, catalog, scratch, target, source, version):
-    """Publish a validated mapping candidate bound to standardized version N.
+    """Publish validated mapping rows and their source-version binding atomically.
 
-    1. pre-publication race check: any DATA-CHANGING commit on `source`
-       strictly above N refuses publication — the existing complete mapping
-       stays untouched;
-    2. ONE atomic Delta statement replaces the rows AND sets the property
-       `bto.standardized_version = N` (a create-or-replace without the clause
-       would reset it, so the rows and the binding can only appear together);
-    3. post-publication race check: a data-changing commit that landed after
-       step 1 makes the just-published mapping stale — the run fails, the
-       mapping stays (its property truthfully says N) and the freshness guard
-       rejects it until canonicalization reruns.
-    Maintenance-only commits above N never block.
-    """
+    Check for source data changes before and after publication. A later data
+    change leaves the mapping honestly bound to its old version and makes it stale.
+    Recognised maintenance-only commits do not block publication."""
     if scratch == target:
         raise BuildError(f"publication source and target coincide: {target}")
     changed = freshness.data_changing_commits_above(dbx, source, version)
@@ -1131,13 +1033,7 @@ def _check_name_fragments(parser, args):
 
 
 class _Parser(argparse.ArgumentParser):
-    """Usage errors exit 4, not argparse's 2. Every exit status has one
-    owner: 2, 3 and 5 are returned only after run.py DELIVERED its alert,
-    so the systemd fallback (ExecStopPost= in clean-job-listings.service)
-    stays silent on them; 6 is the same handled failures when the alert did
-    NOT reach SMTP; 4 (usage, configuration) and 1 (Python itself — an
-    import error, a missing dependency — before main() ran) carry no alert.
-    The fallback reports 6, 4 and 1."""
+    """Keep configuration errors distinct from failed builds and stale mappings."""
 
     def error(self, message):
         self.print_usage(sys.stderr)
@@ -1210,8 +1106,7 @@ def main(argv=None):
     try:
         config = settings_module.load()
     except SystemExit as failure:
-        # without configuration there is no way to email: exit 4 marks "not
-        # alerted" for the systemd fallback (see _Parser)
+        # The nightly owner records this command's nonzero exit and sends email.
         log.error("CONFIGURATION: %s", failure)
         return 4
     catalog = config["databricks_catalog"]
@@ -1356,55 +1251,50 @@ def main(argv=None):
                      version)
     except BuildError as failure:
         log.error("BUILD FAILED — %s", failure)
-        # 6 when the alert never reached SMTP. The ExecStopPost fallback
-        # suppresses itself for 2, 3 and 5, so an undelivered alert has to
-        # exit with a status it does not suppress or the failure is silent.
-        return 2 if _alert(config, args, "cleaning build failed",
-                           str(failure)) else 6
+        _record_problem(config, "cleaning build failed", str(failure))
+        return 2
     except freshness.StaleMapping as stale:
         log.error("CLEANING INCOMPLETE — %s", stale)
-        return 3 if _alert(config, args, "cleaning mapping not current",
-                           str(stale)) else 6
+        _record_problem(config, "cleaning mapping not current", str(stale))
+        return 3
     except Exception as failure:
-        # Operational failures that are not build verdicts — a Databricks API
-        # or network error, the job wait deadline, a missing deployed wheel,
-        # anything unexpected. The traceback stays in the journal, one alert
-        # is attempted, and the exit is 5 — never 1, which Python uses when it
-        # dies BEFORE main() (an import error) and nobody alerted.
-        # Nothing here bypasses validation: each publication statement is
-        # atomic and its candidate is validated first.
-        log.exception("CLEANING FAILED — %s", type(failure).__name__)
-        return 5 if _alert(config, args, "cleaning failed",
-                           f"{type(failure).__name__}: {failure}") else 6
-    # OUTSIDE the try: the heartbeat reports work that is already finished and
-    # published, so nothing it does may turn a successful run into a failure
+        log_failure(log, "CLEANING FAILED", error=failure)
+        _record_problem(config, "cleaning failed", f"{type(failure).__name__}: {failure}")
+        return 5
+    # Reporting stays outside the work's failure boundary: a summary problem
+    # must never turn published results into a failed cleaning run.
     _summary(config, args, summary, began)
     return 0
 
 
 def _report_standardization(config, report, args):
-    """Log the monitoring tallies; alert through the existing path when any
-    pair is partial. Alerting never fails the work that produced it."""
+    """Log monitoring tallies and retain partial-pair details for the nightly email."""
     for pair, tally in sorted(report["pairs"].items()):
         log.info("monitoring %s: %s", pair, json.dumps(tally, sort_keys=True))
     if report.get("partial_pairs"):
-        _alert(config, args, "standardization partial: quarantined rows",
+        _record_problem(config, "standardization partial: quarantined rows",
                json.dumps({pair: report["pairs"][pair]
                            for pair in report["partial_pairs"]},
                           indent=1, sort_keys=True))
 
 
 def _summary(config, args, result, began):
-    """The nightly heartbeat: one email per SUCCESSFUL production run.
+    """Save the nightly outcome, or send a standalone successful cleaning summary.
 
-    Only the two stages that maintain the production tables send it, and only
-    when they are unsuffixed — a suffixed validation pair, a partial stage and
-    a dry run stay silent. Problem alerts are independent, so
-    a run with quarantined rows sends its alert AND this.
-
-    Fail-soft like every alert here: an undelivered summary is logged and the
-    run still succeeds. Its absence is an operational signal to investigate.
+    Validation targets and partial-stage commands do not send summaries.
+    A summary delivery failure never changes the cleaning result.
     """
+    if config.get("combined_nightly_email"):
+        from bto.filter_and_bucket_job_listings.call_gemini_batch import save, timestamp
+        path = Path("data/job_sorting/cleaning-outcome.json")
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        notes = []
+        if began and previous.get("at", "") >= began.isoformat():
+            notes = previous.get("notes", [])
+            if previous.get("error"):
+                notes = [*notes, previous["error"]]
+        save(path, {"at": timestamp(), "status": "complete", "summary": result, "notes": notes})
+        return
     if result is None or args.target_suffix or args.stage not in ("nightly", "all"):
         return
     elapsed = None
@@ -1422,19 +1312,20 @@ def _summary(config, args, result, began):
             canonicalization_mode=result.get("canonicalization_mode"),
             fallback_reason=result.get("fallback_reason"))
     except Exception as failure:
-        log.warning("summary not sent: %s", failure)
+        log_failure(log, "summary not sent", error=failure, level=logging.WARNING)
 
 
-def _alert(config, args, cause, detail):
-    """True only when the alert reached SMTP; False when it did not."""
+def _record_problem(config, cause, detail):
+    """Retain the error privately; the nightly owner sends the failure email."""
+    if not config.get("combined_nightly_email"):
+        return
     try:
-        return notify.send_problem_alert(
-            config, run_id=getattr(args, "build_id", None) or "clean_job_listings",
-            board=args.board or "all", market=args.market or "all",
-            cause=cause, detail=detail, subject=notify.CLEAN_ALERT_SUBJECT)
+        from bto.filter_and_bucket_job_listings.call_gemini_batch import save, timestamp
+        save(Path("data/job_sorting/cleaning-outcome.json"), {
+            "at": timestamp(), "status": "failed", "error": cause + ": " + detail,
+        })
     except Exception as failure:
-        log.warning("alert not sent (%s): %s", cause, failure)
-        return False
+        log_failure(log, "could not save cleaning failure checkpoint", error=failure)
 
 
 if __name__ == "__main__":

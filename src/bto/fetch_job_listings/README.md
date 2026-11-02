@@ -345,7 +345,7 @@ rest.
 ```
 run_id = {board}_{market}_{YYYYMMDD_HHMMSS}_{suffix}
 
-jobstreet_sg_20260828_033000_a7f3
+example_xx_20000101_000000_0000  # synthetic example
 ```
 
 Lowercase board and market, timestamp in SGT, four random hex characters.
@@ -418,60 +418,14 @@ notifies.**
 
 ## Emails
 
-Three fetch-related message types. All subjects start with
-**`[back-to-office]`**, so one Gmail filter on that tag catches everything this
-stage sends.
+The complete nightly workflow sends one of the five nightly emails through
+`bto.nightly_run`. Source failures and partial coverage appear in Needs attention;
+a stopped workflow uses the incomplete or crash email. Collection does not
+send separate per-run failure alerts.
 
-### Problem alert
-
-Delivery is attempted as soon as a run ends with a meaningful problem:
-
-| | |
-| :--- | :--- |
-| `failed` | The run died |
-| `partial` | The run finished with usable work but incomplete or unsatisfactory collection evidence; the alert gives the exact reason |
-| Cap reached | 5,000 fetches in one run |
-| Abnormal volume | A board returned far more than it ever has; the run stopped rather than continue |
-| Cost not recorded | The scrape worked but its cost row could not be written |
-
-Subject: **`[back-to-office] Fetch Job Listings Error`**.
-
-The message contains the board, market, cause, counters, `run_id`, what landed
-and what remains. A `partial` message must make clear that its counters and
-outstanding work are known; a `failed` message must not imply that unreliable
-counters are complete.
-
-### Fetch-execution summary
-
-One summary delivery is attempted per fetch execution, good or bad, when that
-execution finishes. The scheduled 03:30 fetch is followed by its summary
-through the systemd service chain; a manual or smoke fetch attempts its own
-summary as it finishes, covering only its own run(s). The summary is scoped to
-the exact runs the execution launched — never "everything from today".
-
-Subject: **`[back-to-office] Fetch Job Listings Summary`**.
-
-The message contains every board × market run the execution intended, status,
-new and changed counts where available, totals, runtime, failures and
-deferred work — as an HTML table with a plain-text fallback.
-
-`Changed` is a dash for Indeed and LinkedIn — their job descriptions arrive with
-the search result, so there is nothing to re-download and nothing to compare.
-A run that failed shows `[FAILED]` in the table with a detail line under it.
-
-### Summary unavailable
-
-If Databricks does not return the run results needed to build a summary, a
-summary-unavailable message is attempted instead.
-
-Subject: **`[back-to-office] Fetch Job Listings Summary Unavailable`**.
-
-Email uses `smtplib` and runtime environment settings: `.env` locally and
-`/etc/bto/env` under the current systemd deployment. Sending is fail-soft:
-missing configuration or delivery failure is logged and does not break
-collection.
-
-The daily email does not report spend; spend reporting is planned later.
+Explicit manual collection and `python -m bto summarise` retain their
+handoff-scoped collection summary. If that summary cannot be built, the command
+logs the error rather than sending a separate summary-unavailable alert.
 
 ## Logging
 

@@ -1,0 +1,33 @@
+{# Render one table page with sorting, read controls and pagination. #}<div class="queue-content" data-view-table {{ 'hidden' if request.args.get('view')!='table' }}>
+  <div class="table-scroll" data-table-scroll>
+    <table class="jobs-table review-table">
+      <colgroup>{% for key,label,definition in table.columns %}<col class="table-col-{{ key }}">{% endfor %}</colgroup>
+      <thead><tr>{% for key,label,definition in table.columns %}<th aria-sort="{{ ('ascending' if table.direction=='asc' else 'descending') if table.sort==key else 'none' }}" data-column="{{ key }}">
+        <a data-table-sort="{{ key }}" class="{{ 'sorted' if table.sort==key }}" href="{{ page_url(sort=key,direction='desc' if table.sort==key and table.direction=='asc' else 'asc',page=1,id=None,view='table') }}"><span>{{ label }}</span>{% if definition %}<span class="info-tip" tabindex="0" aria-label="{{ label }} definition" data-tooltip="{{ definition }}">i</span>{% endif %}<span class="sort-arrow">{{ ('↑' if table.direction=='asc' else '↓') if table.sort==key }}</span></a>
+      </th>{% endfor %}</tr></thead>
+      <tbody>{% for job in jobs %}{% set rs=job.review_state %}{% set salary=job|salary_label('') %}
+        <tr data-review-row="{{ page_url(id=job.id,view='page',table_keep=None) }}" data-row-id="{{ job.id }}" class="{{ 'row-read' if rs.reviewed_at }}">
+          <td><button class="read-dot {{ 'is-read' if rs.reviewed_at }}" data-review-state-action="read" data-job-id="{{ job.id }}" data-active="{{ 'false' if rs.reviewed_at else 'true' }}" title="{{ 'Mark unread' if rs.reviewed_at else 'Mark read' }}" aria-label="{{ 'Mark unread' if rs.reviewed_at else 'Mark read' }}" {{ 'disabled' if user.role!='admin' or not review_state_available }}><span></span></button></td>
+          <td><a data-review-open href="{{ page_url(id=job.id,view='page',table_keep=None) }}">{{ job.title or 'Title not supplied' }}</a></td>
+          <td>{{ job.advertiser_name or 'Not supplied' }}</td>
+          <td class="{{ 'recruitment-yes' if job.is_recruitment_firm else 'no-value' }}">{{ 'Yes' if job.is_recruitment_firm else '—' }}</td>
+          <td><div class="table-bucket-cell"><span class="table-bucket" data-bucket="{{ job.bucket }}">{{ 'Out of scope · ' if job.bucket in ['title_filter','non_tech','tech_not_for_me'] }}{{ bucket_labels.get(job.bucket,'Not sorted') }}</span><span class="muted table-decider">{{ job.decided_by or '' }}</span></div></td>
+          <td title="{{ job.reason or '—' }}"><div class="reason-scroll" data-hscroll>{{ job.reason or '—' }}</div></td>
+          <td class="{{ '' if salary else 'no-value' }}" title="{{ salary or '—' }}">{{ salary or '—' }}</td>
+          <td>{{ job.market|upper }}</td>
+          <td>{{ board_labels.get(job.board,job.board) }}</td>
+          <td>{{ job.listing_first_seen_at|collection_night }}</td>
+          <td class="table-star">{{ '★' if rs.starred_at else '' }}</td>
+        </tr>
+      {% else %}<tr><td colspan="11" class="table-empty">No jobs in this queue.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  <div class="table-pagination" data-review-pagination>
+    <div class="table-page-sizes"><span class="control-label">Rows per page</span><div class="segmented compact">{% for size in table.sizes %}<a data-table-size="{{ size }}" class="{{ 'selected' if size==table.size }}" aria-pressed="{{ 'true' if size==table.size else 'false' }}" href="{{ page_url(size=size,page=((page-1)*table.size)//size+1,id=None,view='table') }}">{{ size }}</a>{% endfor %}</div></div>
+    <strong class="table-range">{{ table.first }}{{ '–'+table.last|string if total else '' }} of {{ total }}</strong>
+    <nav class="table-pages" aria-label="Table pagination"><a class="round" data-table-page aria-label="Previous page" title="Previous page · ←" aria-disabled="{{ 'true' if page<=1 else 'false' }}" href="{{ page_url(page=page-1,id=None,view='table') }}">‹</a>
+      {% for number in table.numbers %}{% if number %}<a data-table-page class="page-number {{ 'selected' if number==page }}" {{ 'aria-current=page' if number==page }} href="{{ page_url(page=number,id=None,view='table') }}">{{ number }}</a>{% else %}<span class="page-ellipsis">…</span>{% endif %}{% endfor %}
+      <a class="round" data-table-page aria-label="Next page" title="Next page · →" aria-disabled="{{ 'true' if page>=pages else 'false' }}" href="{{ page_url(page=page+1,id=None,view='table') }}">›</a></nav>
+    <span class="table-arrow-hints"><span class="key-hint">←</span><span class="key-hint">→</span></span>
+  </div>
+</div>

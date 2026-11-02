@@ -1,0 +1,14 @@
+{# Render filter chips, queue counts and selected-job navigation. #}<div class="review-status">
+  <strong data-job-count>{{ total if total is not none else '—' }} jobs</strong><span class="separator"></span>
+  <div class="read-filter"><span class="control-label">Show</span><div class="segmented compact">
+    {% for key,label in [('unread','Unread'),('read','Read'),('all','All')] %}<a data-review-show class="{{ 'selected' if nav.get('show','unread')==key }}" href="{{ page_url(show=key,id=None,page=1,table_keep=None) }}">{{ label }} <span data-show-count="{{ key }}">{{ counts.get(key,0) }}</span></a>{% endfor %}
+  </div></div><span class="separator"></span>
+  <div class="filter-summaries">
+    {% for chip in filters.get('chips',[]) %}{% set label='first seen: '+filters.seen_label if chip.key=='seen' else chip.label %}<span class="filter-summary">{{ label }}{% if chip.removable %} <a data-filter-clear="{{ chip.key }}" data-filter-value="{{ chip.value }}" aria-label="Remove {{ label }}" href="{{ page_url(**dict(chip.changes,id=None,page=1,table_keep=None)) }}">×</a>{% endif %}</span>{% endfor %}
+  </div>
+  {% if not review_state_available and total is not none %}<span class="muted small">Read/star/save unavailable</span>{% endif %}<span data-review-loading aria-live="polite"></span>
+  {% if loaded is defined and loaded and total is not none %}<div class="queue-pages" data-page-counter {{ 'hidden' if request.args.get('view')=='table' }}>
+    <span class="separator"></span><span class="advertiser-progress" data-advertiser-progress {{ 'hidden' if not advertiser }}><span class="advertiser-position" title="Position among this advertiser's jobs in the current queue"><strong data-advertiser-name>{{ advertiser.name if advertiser else '' }}</strong><span data-advertiser-count>{{ advertiser.position|string+' of '+advertiser.total|string if advertiser else '' }}</span></span><span class="separator"></span></span>
+    <strong data-to-go>{{ nav.get('to_go',0) }} to go</strong><span class="strip-navigation"><a data-previous aria-label="Previous job" aria-disabled="{{ 'false' if nav.get('previous_id') else 'true' }}" href="{{ page_url(id=nav.previous_id) if nav.get('previous_id') else '#' }}">‹</a><a data-next aria-label="Next job" aria-disabled="{{ 'false' if selected else 'true' }}" href="{{ page_url(id=nav.next_id) if nav.get('next_id') else '#' }}">›</a></span>
+  </div>{% endif %}
+</div>
